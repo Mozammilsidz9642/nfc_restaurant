@@ -28,6 +28,12 @@ app.get("/api/menu", async (_req, res) => {
 // 2. New Online Order Create API
 app.post("/api/orders", async (req, res) => {
   try {
+    const body: unknown = req.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return res.status(400).json({ error: "Missing required order details" });
+    }
+
+    const orderData = body as Record<string, unknown>;
     const {
       customerName,
       customerPhone,
@@ -35,20 +41,44 @@ app.post("/api/orders", async (req, res) => {
       deliveryAddress,
       items,
       totalAmount,
-    } = req.body;
+    } = orderData;
+
+    const validItems =
+      Array.isArray(items) &&
+      items.length > 0 &&
+      items.every((item: unknown) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return false;
+        }
+
+        const orderItem = item as Record<string, unknown>;
+        return (
+          typeof orderItem.name === "string" &&
+          typeof orderItem.size === "string" &&
+          typeof orderItem.price === "number" &&
+          Number.isFinite(orderItem.price) &&
+          typeof orderItem.quantity === "number" &&
+          Number.isInteger(orderItem.quantity) &&
+          orderItem.quantity > 0
+        );
+      });
 
     if (
-      !customerName ||
-      !customerPhone ||
-      !deliveryAddress ||
-      !items ||
-      items.length === 0
+      typeof customerName !== "string" ||
+      !customerName.trim() ||
+      typeof customerPhone !== "string" ||
+      !customerPhone.trim() ||
+      (customerEmail !== undefined && typeof customerEmail !== "string") ||
+      typeof deliveryAddress !== "string" ||
+      !deliveryAddress.trim() ||
+      !validItems ||
+      typeof totalAmount !== "number" ||
+      !Number.isFinite(totalAmount)
     ) {
-      return res.status(400).json({ error: "Missing required order details" });
+      return res.status(400).json({ error: "Missing or invalid order details" });
     }
 
-    // Shadowfax / Live Tracking URL Token
-    const trackingToken = "NFC-" + Math.floor(1000 + Math.random() * 9000);
+    const trackingToken = `NFC-${Math.floor(1000 + Math.random() * 9000)}`;
     const trackingUrl = `https://track.nfcorders.in/order/${trackingToken}`;
 
     const newOrder = new Order({
@@ -59,8 +89,6 @@ app.post("/api/orders", async (req, res) => {
       items,
       totalAmount,
       trackingUrl,
-      riderName: "Assigning delivery partner...",
-      riderPhone: "--",
     });
 
     const savedOrder = await newOrder.save();
@@ -69,33 +97,32 @@ app.post("/api/orders", async (req, res) => {
       `[New Order Received]: #${trackingToken} | Customer: ${customerName} | ₹${totalAmount}`
     );
 
-    // Optional Email Notification (triggers if .env has credentials)
     if (process.env.EMAIL_USER && process.env.EMAIL_PASS && customerEmail) {
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS,
-        },
-      });
+      try {
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+          },
+        });
 
-      const mailOptions = {
-        from: `"Noida Fried Chicken" <${process.env.EMAIL_USER}>`,
-        to: customerEmail,
-        subject: `Order Confirmed #${trackingToken} - Noida Fried Chicken`,
-        html: `
-          <h2>Thank you for your order, ${customerName}!</h2>
-          <p>Your order worth <b>₹${totalAmount}</b> is confirmed and being prepared fresh.</p>
-          <p><b>Delivery Address:</b> ${deliveryAddress}</p>
-          <p><b>Live Rider Tracking:</b> <a href="${trackingUrl}">${trackingUrl}</a></p>
-          <hr/>
-          <p>Estimated Delivery: 30 - 40 Minutes</p>
-        `,
-      };
-
-      transporter.sendMail(mailOptions).catch((mailErr) =>
-        console.log("Mail error:", mailErr)
-      );
+        await transporter.sendMail({
+          from: `"Noida Fried Chicken" <${process.env.EMAIL_USER}>`,
+          to: customerEmail,
+          subject: `Order Confirmed #${trackingToken} - Noida Fried Chicken`,
+          html: `
+            <h2>Thank you for your order, ${customerName}!</h2>
+            <p>Your order worth <b>₹${totalAmount}</b> is confirmed and being prepared fresh.</p>
+            <p><b>Delivery Address:</b> ${deliveryAddress}</p>
+            <p><b>Live Rider Tracking:</b> <a href="${trackingUrl}">${trackingUrl}</a></p>
+            <hr/>
+            <p>Estimated Delivery: 30 - 40 Minutes</p>
+          `,
+        });
+      } catch (mailErr) {
+        console.error("Mail error:", mailErr);
+      }
     }
 
     res.status(201).json({
@@ -107,8 +134,12 @@ app.post("/api/orders", async (req, res) => {
       order: savedOrder,
     });
   } catch (err) {
-    console.error("Order placement error:", err);
-    res.status(500).json({ error: "Failed to place order" });
+    console.error("Order Creation Error:", err);
+    const message = err instanceof Error ? err.message : undefined;
+    res.status(500).json({
+      success: false,
+      error: message || "Failed to place order",
+    });
   }
 });
 
