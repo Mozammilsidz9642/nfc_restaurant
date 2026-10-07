@@ -3,6 +3,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
+import Razorpay from "razorpay";
+import { createHmac, timingSafeEqual } from "crypto";
 import MenuItem from "./models/MenuItem";
 import Order from "./models/Order";
 import { Admin } from "./models/Admin";
@@ -10,6 +12,7 @@ import { StoreSettings } from "./models/StoreSettings";
 import { sendOrderEmail } from "./utils/email";
 import { sendOrderSMS } from "./utils/sms";
 import { sendOrderWhatsApp } from "./utils/whatsapp";
+import { dispatchShadowfaxOrder } from "./utils/shadowfax";
 import { protectManager, AuthRequest } from "./middleware/auth";
 
 dotenv.config();
@@ -17,6 +20,10 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "nfc_super_secure_secret_key_2026";
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_dummy_key",
+  key_secret: process.env.RAZORPAY_KEY_SECRET || "dummy_secret",
+});
 
 app.use(cors());
 app.use(express.json());
@@ -68,10 +75,25 @@ app.get("/api/store/status", async (_req: Request, res: Response) => {
   }
 });
 
-// 3. PUBLIC: Create Order (Customer side)
-app.post("/api/orders", async (req: Request, res: Response): Promise<void> => {
+// 3. PUBLIC: Create a Razorpay order for online payment
+app.post("/api/payment/create-order", async (req: Request, res: Response): Promise<void> => {
   try {
-    // Check Store Open hai ya nahi
+    const body: unknown = req.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      res.status(400).json({ success: false, message: "Invalid payment amount" });
+      return;
+    }
+
+    const { itemsTotal, deliveryFee } = body as Record<string, unknown>;
+    if (
+      typeof itemsTotal !== "number" || !Number.isFinite(itemsTotal) || itemsTotal < 0 ||
+      typeof deliveryFee !== "number" || !Number.isFinite(deliveryFee) || deliveryFee < 0 ||
+      itemsTotal + deliveryFee <= 0
+    ) {
+      res.status(400).json({ success: false, message: "Invalid payment amount" });
+      return;
+    }
+
     const settings = await StoreSettings.findOne();
     if (settings && !settings.isStoreOpen) {
       res.status(400).json({
@@ -81,47 +103,299 @@ app.post("/api/orders", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const { customerName, customerPhone, customerEmail, deliveryAddress, items, totalAmount } = req.body;
+    const configuredKeyId = process.env.RAZORPAY_KEY_ID?.trim();
+    const configuredKeySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+    const hasUsableCredentials =
+      !!configuredKeyId &&
+      /^rzp_(test|live)_[A-Za-z0-9]+$/.test(configuredKeyId) &&
+      !configuredKeyId.startsWith("rzp_test_sample") &&
+      !!configuredKeySecret &&
+      configuredKeySecret !== "dummy_secret";
 
-    if (!customerName || !customerPhone || !items || items.length === 0 || !totalAmount) {
-      res.status(400).json({ success: false, message: "Missing required order fields" });
+    if (!hasUsableCredentials) {
+      const total = itemsTotal + deliveryFee;
+      const timestamp = Date.now();
+      console.log("[Mock Razorpay Order]: Razorpay credentials are missing or placeholders.");
+      res.json({
+        success: true,
+        razorpayOrderId: `order_mock_${timestamp}`,
+        amount: total * 100,
+        currency: "INR",
+        keyId: configuredKeyId || "rzp_test_dummy",
+      });
+      return;
+    }
+
+    const order = await razorpay.orders.create({
+      amount: Math.round((itemsTotal + deliveryFee) * 100),
+      currency: "INR",
+      receipt: "rcpt_" + Date.now(),
+    });
+
+    res.json({
+      success: true,
+      razorpayOrderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: process.env.RAZORPAY_KEY_ID,
+    });
+  } catch (error) {
+    console.error("Razorpay Order Creation Error:", error);
+    res.status(500).json({ success: false, message: "Could not create payment order" });
+  }
+});
+
+// 4. PUBLIC: Verify payment before placing the order
+app.post("/api/payment/verify-and-place-order", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const body: unknown = req.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      res.status(400).json({ success: false, message: "Invalid order details" });
+      return;
+    }
+
+    const data = body as Record<string, unknown>;
+    const {
+      razorpayOrderId, razorpayPaymentId, razorpaySignature,
+      customerName, customerPhone, customerEmail, deliveryAddress,
+      items, itemsTotal, deliveryFee, totalAmount,
+    } = data;
+
+    const validItems = Array.isArray(items) && items.length > 0 && items.every((item: unknown) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      const orderItem = item as Record<string, unknown>;
+      return typeof orderItem.name === "string" && typeof orderItem.size === "string" &&
+        typeof orderItem.price === "number" && Number.isFinite(orderItem.price) &&
+        typeof orderItem.quantity === "number" && Number.isInteger(orderItem.quantity) &&
+        orderItem.quantity > 0;
+    });
+
+    if (
+      typeof razorpayOrderId !== "string" || !razorpayOrderId ||
+      typeof razorpayPaymentId !== "string" || !razorpayPaymentId ||
+      typeof razorpaySignature !== "string" ||
+      typeof customerName !== "string" || !customerName.trim() ||
+      typeof customerPhone !== "string" || !customerPhone.trim() ||
+      (customerEmail !== undefined && typeof customerEmail !== "string") ||
+      typeof deliveryAddress !== "string" || !deliveryAddress.trim() || !validItems ||
+      typeof itemsTotal !== "number" || !Number.isFinite(itemsTotal) || itemsTotal < 0 ||
+      typeof deliveryFee !== "number" || !Number.isFinite(deliveryFee) || deliveryFee < 0 ||
+      typeof totalAmount !== "number" || !Number.isFinite(totalAmount) || totalAmount <= 0 ||
+      Math.round((itemsTotal + deliveryFee) * 100) !== Math.round(totalAmount * 100)
+    ) {
+      res.status(400).json({ success: false, message: "Invalid order details" });
+      return;
+    }
+
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (!secret || !/^[a-f\d]{64}$/i.test(razorpaySignature)) {
+      res.status(400).json({ success: false, message: "Invalid payment signature" });
+      return;
+    }
+
+    const expectedSignature = createHmac("sha256", secret)
+      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+      .digest();
+    const receivedSignature = Buffer.from(razorpaySignature, "hex");
+    if (
+      expectedSignature.length !== receivedSignature.length ||
+      !timingSafeEqual(expectedSignature, receivedSignature)
+    ) {
+      res.status(400).json({ success: false, message: "Invalid payment signature" });
+      return;
+    }
+
+    const menuItems = await MenuItem.find();
+    let verifiedItemsTotal = 0;
+    for (const item of items) {
+      const requestedItem = item as Record<string, unknown>;
+      const menuItem = menuItems.find(
+        (candidate) => candidate.name === requestedItem.name && candidate.isAvailable
+      );
+      const variant = menuItem?.variants.find(
+        (candidate) => candidate.size === requestedItem.size
+      );
+      if (!variant || variant.price !== requestedItem.price) {
+        res.status(400).json({
+          success: false,
+          message: "One or more order items are unavailable or have changed price",
+        });
+        return;
+      }
+      verifiedItemsTotal += variant.price * Number(requestedItem.quantity);
+    }
+    if (Math.round(verifiedItemsTotal * 100) !== Math.round(itemsTotal * 100)) {
+      res.status(400).json({ success: false, message: "Order total does not match menu prices" });
+      return;
+    }
+
+    // Confirm with Razorpay that this exact order has a captured payment for the requested total.
+    const [payment, paymentOrder] = await Promise.all([
+      razorpay.payments.fetch(razorpayPaymentId),
+      razorpay.orders.fetch(razorpayOrderId),
+    ]);
+    const expectedAmount = Math.round(totalAmount * 100);
+    if (
+      payment.id !== razorpayPaymentId || payment.order_id !== razorpayOrderId ||
+      payment.status !== "captured" || Number(payment.amount) !== expectedAmount ||
+      paymentOrder.id !== razorpayOrderId || paymentOrder.currency !== "INR" ||
+      paymentOrder.amount !== expectedAmount || paymentOrder.status !== "paid"
+    ) {
+      res.status(400).json({ success: false, message: "Payment is not captured for this order" });
+      return;
+    }
+
+    if (await Order.findOne({ razorpayPaymentId })) {
+      res.status(409).json({ success: false, message: "Payment has already been processed" });
       return;
     }
 
     const orderIdToken = `NFC-${Math.floor(1000 + Math.random() * 9000)}`;
     const trackingUrl = `https://track.nfcorders.in/order/${orderIdToken}`;
-
-    const newOrder = await Order.create({
+    const newOrder = new Order({
       orderId: orderIdToken,
       customerName,
       customerPhone,
       customerEmail: customerEmail || "",
       deliveryAddress,
       items,
+      deliveryFee,
       totalAmount,
+      paymentMethod: "ONLINE",
+      paymentStatus: "Paid",
+      razorpayOrderId,
+      razorpayPaymentId,
       status: "Placed",
       trackingUrl,
     });
 
-    console.log(`[New Order Received]: #${orderIdToken} | Customer: ${customerName} | ₹${totalAmount}`);
+    // Persist the paid order first so a logistics provider outage cannot lose it.
+    await newOrder.save();
 
-    // Asynchronous Alerts
-    sendOrderEmail(customerEmail, customerName, orderIdToken, totalAmount, trackingUrl).catch(console.error);
-    sendOrderSMS(customerPhone, customerName, orderIdToken, totalAmount).catch(console.error);
-    sendOrderWhatsApp(customerPhone, customerName, orderIdToken, totalAmount).catch(console.error);
+    try {
+      const dispatchResult = await dispatchShadowfaxOrder(newOrder);
+      newOrder.trackingUrl = dispatchResult.trackingUrl;
+      newOrder.riderName = dispatchResult.riderName || "";
+      newOrder.riderPhone = dispatchResult.riderPhone || "";
+      await newOrder.save();
+    } catch (dispatchError: unknown) {
+      console.error("Shadowfax Dispatch Error:", dispatchError);
+    }
+
+    console.log(`[New Prepaid Order]: #${orderIdToken} | Customer: ${customerName} | Rs.${totalAmount}`);
+    sendOrderEmail(
+      typeof customerEmail === "string" ? customerEmail : "",
+      customerName,
+      orderIdToken,
+      totalAmount,
+      newOrder.trackingUrl
+    ).catch(console.error);
+    sendOrderSMS(customerPhone, customerName, orderIdToken, totalAmount, newOrder.trackingUrl).catch(console.error);
+    sendOrderWhatsApp(customerPhone, customerName, orderIdToken, totalAmount, newOrder.trackingUrl).catch(console.error);
 
     res.status(201).json({
       success: true,
-      message: "Order placed successfully!",
-      orderId: newOrder._id,
-      trackingToken: orderIdToken,
-      trackingUrl,
+      message: "Payment verified and order placed",
       order: newOrder,
     });
   } catch (error) {
-    console.error("Order Creation Error:", error);
-    res.status(500).json({ success: false, message: "Server error creating order", error });
+    console.error("Payment Verification / Order Creation Error:", error);
+    res.status(500).json({ success: false, message: "Could not verify payment or place order" });
   }
+});
+
+// Public order tracking by order token or MongoDB document ID.
+app.get("/api/orders/track/:orderId", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const routeParam = req.params.orderId;
+    const lookupId = Array.isArray(routeParam) ? routeParam[0] : routeParam;
+    if (!lookupId) {
+      res.status(404).json({ success: false, message: "Order not found" });
+      return;
+    }
+    const order =
+      (await Order.findOne({ orderId: lookupId })) ||
+      (mongoose.Types.ObjectId.isValid(lookupId) ? await Order.findById(lookupId) : null);
+
+    if (!order) {
+      res.status(404).json({ success: false, message: "Order not found" });
+      return;
+    }
+
+    res.json({
+      success: true,
+      orderId: order.orderId,
+      status: order.status,
+      customerName: order.customerName,
+      deliveryAddress: order.deliveryAddress,
+      items: order.items,
+      totalAmount: order.totalAmount,
+      deliveryFee: order.deliveryFee,
+      trackingUrl: order.trackingUrl,
+      riderName: order.riderName,
+      riderPhone: order.riderPhone,
+      createdAt: order.createdAt,
+    });
+  } catch (error) {
+    console.error("Order Tracking Lookup Error:", error);
+    res.status(500).json({ success: false, message: "Could not retrieve order tracking" });
+  }
+});
+
+// Public Shadowfax status webhook.
+app.post("/api/webhook/shadowfax", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const body: unknown = req.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      res.status(400).json({ success: false, message: "Invalid webhook payload" });
+      return;
+    }
+
+    const data = body as Record<string, unknown>;
+    const details = data.order_details && typeof data.order_details === "object"
+      ? data.order_details as Record<string, unknown>
+      : {};
+    const rider = data.rider && typeof data.rider === "object"
+      ? data.rider as Record<string, unknown>
+      : {};
+    const orderId = [data.orderId, data.order_id, data.client_order_id, details.order_id, details.client_order_id]
+      .find((value): value is string => typeof value === "string" && value.length > 0);
+    const status = [data.status, data.order_status, details.status]
+      .find((value): value is string => typeof value === "string" && value.length > 0);
+
+    if (!orderId || !status) {
+      res.status(400).json({ success: false, message: "Webhook order ID and status are required" });
+      return;
+    }
+
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      res.status(404).json({ success: false, message: "Order not found" });
+      return;
+    }
+
+    order.status = status;
+    const riderName = [data.riderName, data.rider_name, rider.name]
+      .find((value): value is string => typeof value === "string");
+    const riderPhone = [data.riderPhone, data.rider_phone, rider.phone]
+      .find((value): value is string => typeof value === "string");
+    if (riderName !== undefined) order.riderName = riderName;
+    if (riderPhone !== undefined) order.riderPhone = riderPhone;
+
+    await order.save();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Shadowfax Webhook Error:", error);
+    res.status(500).json({ success: false, message: "Could not process Shadowfax update" });
+  }
+});
+
+// Direct order placement is disabled; successful online payment is required.
+app.post("/api/orders", (_req: Request, res: Response): void => {
+  res.status(403).json({
+    success: false,
+    message: "Online payment is required. Use /api/payment/verify-and-place-order.",
+  });
 });
 
 // 4. MANAGER AUTH: Login

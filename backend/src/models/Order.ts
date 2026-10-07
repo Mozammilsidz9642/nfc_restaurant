@@ -15,6 +15,11 @@ export interface OrderDocument extends Document {
   deliveryAddress: string;
   items: IOrderItem[];
   totalAmount: number;
+  deliveryFee: number;
+  paymentMethod: string;
+  paymentStatus: "Paid";
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
   status: string;
   trackingUrl: string;
   riderName: string;
@@ -37,6 +42,11 @@ const OrderSchema = new Schema<OrderDocument>({
     },
   ],
   totalAmount: { type: Number, required: true },
+  deliveryFee: { type: Number, default: 0 },
+  paymentMethod: { type: String, default: "ONLINE" },
+  paymentStatus: { type: String, enum: ["Paid"], default: "Paid" },
+  razorpayOrderId: { type: String, required: true },
+  razorpayPaymentId: { type: String, required: true, unique: true, sparse: true },
   status: { type: String, default: "Placed" },
   trackingUrl: { type: String, default: "" },
   riderName: { type: String, default: "" },

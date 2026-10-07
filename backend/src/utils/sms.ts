@@ -4,11 +4,12 @@ export async function sendOrderSMS(
   phone: string,
   customerName: string,
   orderToken: string,
-  totalAmount: number
+  totalAmount: number,
+  trackingUrl = `https://track.nfcorders.in/order/${orderToken}`
 ): Promise<void> {
   const apiKey = process.env.FAST2SMS_API_KEY?.trim();
   const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
-  const message = `Hi ${customerName}, your NFC order #${orderToken} of Rs.${totalAmount} is confirmed!`;
+  const message = `Hi ${customerName}, your NFC order #${orderToken} of Rs.${totalAmount} is confirmed! Track: ${trackingUrl}`;
 
   console.log(`[SMS Initiated] Sending to ${cleanPhone} with key present: ${!!apiKey}`);
 

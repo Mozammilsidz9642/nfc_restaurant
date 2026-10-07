@@ -4,7 +4,8 @@ export async function sendOrderWhatsApp(
   phone: string,
   customerName: string,
   orderToken: string,
-  totalAmount: number
+  totalAmount: number,
+  trackingUrl = `https://track.nfcorders.in/order/${orderToken}`
 ): Promise<void> {
   const token = process.env.META_WA_TOKEN?.trim();
   const phoneNumberId = process.env.META_WA_PHONE_NUMBER_ID?.trim();
@@ -18,7 +19,7 @@ export async function sendOrderWhatsApp(
   // Agar Meta keys add nahi hain toh mock print hoga
   if (!token || !phoneNumberId) {
     console.log(
-      `[Mock WhatsApp (Meta Cloud API)]: To +${recipient} -> Hi ${customerName}, order #${orderToken} of Rs.${totalAmount} is placed!`
+      `[Mock WhatsApp (Meta Cloud API)]: To +${recipient} -> Hi ${customerName}, order #${orderToken} of Rs.${totalAmount} is placed! Track: ${trackingUrl}`
     );
     return;
   }
@@ -42,7 +43,7 @@ export async function sendOrderWhatsApp(
             parameters: [
               { type: "text", text: customerName },
               { type: "text", text: `#${orderToken}` },
-              { type: "text", text: `Rs.${totalAmount}` },
+              { type: "text", text: `Rs.${totalAmount}. Track: ${trackingUrl}` },
             ],
           },
         ],
