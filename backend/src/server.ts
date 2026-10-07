@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import MenuItem from "./models/MenuItem";
 import Order from "./models/Order";
+import { sendOrderSMS } from "./utils/sms";
+import { sendOrderWhatsApp } from "./utils/whatsapp";
 
 dotenv.config();
 
@@ -82,6 +84,7 @@ app.post("/api/orders", async (req, res) => {
     const trackingUrl = `https://track.nfcorders.in/order/${trackingToken}`;
 
     const newOrder = new Order({
+      orderId: trackingToken,
       customerName,
       customerPhone,
       customerEmail: customerEmail || "",
@@ -93,37 +96,58 @@ app.post("/api/orders", async (req, res) => {
 
     const savedOrder = await newOrder.save();
 
-    console.log(
-      `[New Order Received]: #${trackingToken} | Customer: ${customerName} | ₹${totalAmount}`
+    void sendOrderSMS(customerPhone, customerName, trackingToken, totalAmount).catch(
+      (smsErr: unknown) => console.error("SMS Dispatch Error:", smsErr)
+    );
+    void sendOrderWhatsApp(
+      customerPhone,
+      customerName,
+      trackingToken,
+      totalAmount
+    ).catch((whatsappErr: unknown) =>
+      console.error("WhatsApp Dispatch Error:", whatsappErr)
     );
 
-    if (process.env.EMAIL_USER && process.env.EMAIL_PASS && customerEmail) {
+    console.log(
+      `[New Order Received]: #${trackingToken} | Customer: ${customerName} | â‚¹${totalAmount}`
+    );
+
+    void (async (): Promise<void> => {
+      const emailUser = process.env.EMAIL_USER?.trim();
+      const emailPass = process.env.EMAIL_PASS?.trim();
+      if (!emailUser || !emailPass || !customerEmail) {
+        console.log("[Mock Email]: Email credentials or customer email missing.");
+        return;
+      }
+
       try {
         const transporter = nodemailer.createTransport({
           service: "gmail",
           auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
+            user: emailUser,
+            pass: emailPass,
           },
         });
 
         await transporter.sendMail({
-          from: `"Noida Fried Chicken" <${process.env.EMAIL_USER}>`,
+          from: `"Noida Fried Chicken" <${emailUser}>`,
           to: customerEmail,
           subject: `Order Confirmed #${trackingToken} - Noida Fried Chicken`,
           html: `
             <h2>Thank you for your order, ${customerName}!</h2>
-            <p>Your order worth <b>₹${totalAmount}</b> is confirmed and being prepared fresh.</p>
+            <p>Your order worth <b>â‚¹${totalAmount}</b> is confirmed and being prepared fresh.</p>
             <p><b>Delivery Address:</b> ${deliveryAddress}</p>
             <p><b>Live Rider Tracking:</b> <a href="${trackingUrl}">${trackingUrl}</a></p>
             <hr/>
             <p>Estimated Delivery: 30 - 40 Minutes</p>
           `,
         });
-      } catch (mailErr) {
-        console.error("Mail error:", mailErr);
+      } catch (mailErr: unknown) {
+        console.error("Email Dispatch Error:", mailErr);
       }
-    }
+    })().catch((mailErr: unknown) =>
+      console.error("Email Dispatch Error:", mailErr)
+    );
 
     res.status(201).json({
       success: true,
