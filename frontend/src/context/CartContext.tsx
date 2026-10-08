@@ -17,7 +17,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   });
 
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [diningMode, setDiningMode] = useState<DiningMode>('dine-in');
+  const [diningMode, setDiningMode] = useState<DiningMode>('delivery');
   const [tableNumber, setTableNumber] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);

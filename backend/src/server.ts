@@ -277,11 +277,11 @@ app.post("/api/payment/verify-and-place-order", async (req: Request, res: Respon
     }
 
     // Confirm with Razorpay that this exact order has a captured payment for the requested total.
+    const expectedAmount = Math.round(totalAmount * 100);
     const [payment, paymentOrder] = await Promise.all([
       razorpay.payments.fetch(razorpayPaymentId),
       razorpay.orders.fetch(razorpayOrderId),
     ]);
-    const expectedAmount = Math.round(totalAmount * 100);
     if (
       payment.id !== razorpayPaymentId || payment.order_id !== razorpayOrderId ||
       payment.status !== "captured" || Number(payment.amount) !== expectedAmount ||

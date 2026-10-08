@@ -3,7 +3,7 @@ import type { BillSummaryData } from '../../types/cart';
 
 interface BillSummaryProps {
   bill: BillSummaryData;
-  diningMode: 'dine-in' | 'takeaway';
+  diningMode: 'dine-in' | 'takeaway' | 'delivery';
 }
 
 export function BillSummary({ bill, diningMode }: BillSummaryProps) {

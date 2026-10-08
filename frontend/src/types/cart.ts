@@ -14,7 +14,7 @@ export interface CartItem {
   instruction?: string;
 }
 
-export type DiningMode = 'dine-in' | 'takeaway';
+export type DiningMode = 'dine-in' | 'takeaway' | 'delivery';
 
 export interface BillSummaryData {
   itemTotal: number;
