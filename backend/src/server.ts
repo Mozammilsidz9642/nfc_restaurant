@@ -14,6 +14,7 @@ import { sendOrderSMS } from "./utils/sms";
 import { sendOrderWhatsApp } from "./utils/whatsapp";
 import { dispatchShadowfaxOrder } from "./utils/shadowfax";
 import { protectManager, AuthRequest } from "./middleware/auth";
+import { realNFCMenu } from "./seed";
 
 dotenv.config();
 
@@ -29,11 +30,18 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB Connection
-const MONGO_URI = process.env.MONGO_URI || "";
+const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/nfc_db";
 mongoose
   .connect(MONGO_URI)
   .then(async () => {
     console.log("MongoDB Connected");
+
+    // Initialize Menu items if database is empty
+    const menuCount = await MenuItem.countDocuments();
+    if (menuCount === 0) {
+      await MenuItem.insertMany(realNFCMenu);
+      console.log("NFC Menu auto-seeded with", realNFCMenu.length, "items");
+    }
 
     // Initialize Default Store Settings agar nahi hai toh
     const storeCount = await StoreSettings.countDocuments();
@@ -52,24 +60,45 @@ mongoose
       console.log("Default Manager Created: username 'nfcmanager'");
     }
   })
-  .catch((err) => console.error("MongoDB Error:", err));
+  .catch((err) => {
+    console.warn("MongoDB Connection Warning (running in resilient mode):", err.message);
+  });
 
 // 1. PUBLIC: Get Menu
-app.get("/api/menu", async (_req: Request, res: Response) => {
+app.get("/api/menu", async (_req: Request, res: Response): Promise<void> => {
   try {
-    const items = await MenuItem.find();
-    res.json(items);
+    if (mongoose.connection.readyState === 1) {
+      let items = await MenuItem.find();
+      if (items.length === 0) {
+        await MenuItem.insertMany(realNFCMenu);
+        items = await MenuItem.find();
+      }
+      res.json(items);
+      return;
+    }
+
+    // Fallback menu when local MongoDB is not connected
+    const fallbackItems = realNFCMenu.map((item, idx) => ({
+      ...item,
+      id: `nfc-item-${idx + 1}`,
+      _id: `nfc-item-${idx + 1}`,
+    }));
+    res.json(fallbackItems);
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch menu items", error });
   }
 });
 
 // 2. PUBLIC: Get Store Status (Store Open/Closed?)
-app.get("/api/store/status", async (_req: Request, res: Response) => {
+app.get("/api/store/status", async (_req: Request, res: Response): Promise<void> => {
   try {
-    let settings = await StoreSettings.findOne();
-    if (!settings) settings = await StoreSettings.create({ isStoreOpen: true });
-    res.json({ success: true, isStoreOpen: settings.isStoreOpen, message: settings.closingMessage });
+    if (mongoose.connection.readyState === 1) {
+      let settings = await StoreSettings.findOne();
+      if (!settings) settings = await StoreSettings.create({ isStoreOpen: true });
+      res.json({ success: true, isStoreOpen: settings.isStoreOpen, message: settings.closingMessage });
+      return;
+    }
+    res.json({ success: true, isStoreOpen: true, message: "Welcome to Noida Fried Chicken" });
   } catch (error) {
     res.status(500).json({ success: false, message: "Could not fetch store status" });
   }
@@ -94,11 +123,20 @@ app.post("/api/payment/create-order", async (req: Request, res: Response): Promi
       return;
     }
 
-    const settings = await StoreSettings.findOne();
-    if (settings && !settings.isStoreOpen) {
+    let isStoreOpen = true;
+    let closingMsg = "Restaurant is currently closed.";
+    if (mongoose.connection.readyState === 1) {
+      const settings = await StoreSettings.findOne();
+      if (settings) {
+        isStoreOpen = settings.isStoreOpen;
+        if (settings.closingMessage) closingMsg = settings.closingMessage;
+      }
+    }
+
+    if (!isStoreOpen) {
       res.status(400).json({
         success: false,
-        message: settings.closingMessage || "Restaurant is currently closed.",
+        message: closingMsg,
       });
       return;
     }
@@ -205,16 +243,25 @@ app.post("/api/payment/verify-and-place-order", async (req: Request, res: Respon
       return;
     }
 
-    const menuItems = await MenuItem.find();
+    const menuItems = mongoose.connection.readyState === 1 ? await MenuItem.find() : (realNFCMenu as any[]);
     let verifiedItemsTotal = 0;
     for (const item of items) {
       const requestedItem = item as Record<string, unknown>;
       const menuItem = menuItems.find(
-        (candidate) => candidate.name === requestedItem.name && candidate.isAvailable
+        (candidate) =>
+          candidate.name.toLowerCase() === String(requestedItem.name || '').toLowerCase() &&
+          candidate.isAvailable
       );
-      const variant = menuItem?.variants.find(
-        (candidate) => candidate.size === requestedItem.size
-      );
+      const variant = menuItem?.variants.find((candidate: any) => {
+        if (candidate.size === requestedItem.size) return true;
+        if (
+          (candidate.size === "QTR" && requestedItem.size === "Quarter") ||
+          (candidate.size === "Quarter" && requestedItem.size === "QTR")
+        ) {
+          return true;
+        }
+        return candidate.size.toLowerCase() === String(requestedItem.size || '').toLowerCase();
+      });
       if (!variant || variant.price !== requestedItem.price) {
         res.status(400).json({
           success: false,
