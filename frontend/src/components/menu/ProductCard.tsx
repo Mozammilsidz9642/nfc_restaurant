@@ -104,8 +104,8 @@ export function ProductCard({ item, onOpenDetails }: ProductCardProps) {
             {/* Sold Out Overlay */}
             {!isAvailable && (
               <div className="absolute inset-0 bg-stone-950/60 backdrop-blur-[2px] flex items-center justify-center z-10 pointer-events-none">
-                <span className="px-3.5 py-1 rounded-full bg-stone-900/90 text-amber-300 font-bold text-xs uppercase tracking-wider border border-amber-400/30">
-                  Sold Out
+                <span className="px-3.5 py-1 rounded-full bg-red-800/95 text-white font-bold text-xs uppercase tracking-wider border border-white/30">
+                  Out of Stock
                 </span>
               </div>
             )}
@@ -167,9 +167,9 @@ export function ProductCard({ item, onOpenDetails }: ProductCardProps) {
 
             {/* Action */}
             {!isAvailable ? (
-              <span className="px-3 py-1 rounded-full bg-stone-100 text-stone-400 font-bold text-xs uppercase">
-                Unavailable
-              </span>
+              <button type="button" disabled className="px-3 py-1.5 rounded-full bg-stone-200 text-stone-500 font-bold text-xs uppercase cursor-not-allowed" aria-label={`${item.name} is out of stock`}>
+                Out of Stock
+              </button>
             ) : totalInCart > 0 ? (
               <div
                 onClick={(e) => e.stopPropagation()}
@@ -226,11 +226,11 @@ export function ProductCard({ item, onOpenDetails }: ProductCardProps) {
             alt={item.name}
             onError={() => setImgError(true)}
             loading="lazy"
-            className="w-full h-full object-cover object-center"
+            className={`w-full h-full object-cover object-center ${isAvailable ? '' : 'grayscale'}`}
           />
           {!isAvailable && (
-            <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-[10px] text-amber-300 font-bold uppercase">
-              Sold Out
+            <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-[10px] text-white font-bold uppercase">
+              Out of Stock
             </div>
           )}
           <div className="absolute top-1 left-1">
@@ -269,9 +269,9 @@ export function ProductCard({ item, onOpenDetails }: ProductCardProps) {
 
             {/* Action Button */}
             {!isAvailable ? (
-              <span className="text-[10px] font-bold text-stone-400 uppercase">
-                Sold Out
-              </span>
+              <button type="button" disabled className="rounded-full bg-stone-200 px-2.5 py-1 text-[10px] font-bold uppercase text-stone-500 cursor-not-allowed" aria-label={`${item.name} is out of stock`}>
+                Out of Stock
+              </button>
             ) : totalInCart > 0 ? (
               <div
                 onClick={(e) => e.stopPropagation()}

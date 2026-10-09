@@ -19,6 +19,10 @@ import { menuApi } from './services/menuApi';
 import { CATEGORIES } from './data/mockMenu';
 import type { MenuItem, CategoryName } from './types/menu';
 import { AlertCircle, RefreshCw } from 'lucide-react';
+import { BrowserRouter, Route, Routes, useParams } from 'react-router-dom';
+import AdminDashboard from './pages/AdminDashboard';
+
+const API_BASE = 'http://localhost:5000/api';
 
 function MenuAppContent() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -239,10 +243,101 @@ function MenuAppContent() {
   );
 }
 
-export default function App() {
+function CustomerApp() {
   return (
     <CartProvider>
       <MenuAppContent />
     </CartProvider>
+  );
+}
+
+type TrackedOrder = {
+  orderId: string;
+  status: string;
+  customerName: string;
+  deliveryAddress: string;
+  items: { name: string; size: string; quantity: number }[];
+  totalAmount: number;
+  riderName?: string;
+  riderPhone?: string;
+  createdAt?: string;
+};
+
+function OrderTrackingPage() {
+  const { orderId = '' } = useParams();
+  const [order, setOrder] = useState<TrackedOrder | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchOrder = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/orders/track/${encodeURIComponent(orderId)}`);
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.message || 'Order could not be found.');
+        if (!cancelled) {
+          setOrder(result as TrackedOrder);
+          setError('');
+        }
+      } catch (requestError) {
+        if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Unable to load order status.');
+      }
+    };
+    void fetchOrder();
+    const poll = window.setInterval(() => void fetchOrder(), 12_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [orderId]);
+
+  const steps = ['Placed', 'Preparing', 'Out for Delivery', 'Delivered'];
+  const activeStep = steps.indexOf(order?.status || '');
+
+  return (
+    <main className="min-h-screen bg-stone-100 px-4 py-10 text-stone-900">
+      <section className="mx-auto max-w-xl overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-xl">
+        <div className="bg-stone-950 px-6 py-6 text-white">
+          <p className="text-[10px] font-black uppercase tracking-[0.25em] text-amber-300">NFC Order Tracking</p>
+          <h1 className="mt-2 font-serif text-2xl font-black">{order?.orderId || orderId}</h1>
+          <p className="mt-1 text-xs text-stone-300">This page refreshes automatically every 12 seconds.</p>
+        </div>
+        <div className="p-6 sm:p-8">
+          {error && !order ? (
+            <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</p>
+          ) : !order ? (
+            <p className="py-8 text-center text-sm text-stone-500">Loading your order status…</p>
+          ) : (
+            <>
+              <div className="mb-7 rounded-2xl bg-amber-50 p-4 text-center">
+                <p className="text-xs font-bold uppercase tracking-widest text-amber-800">Current Status</p>
+                <p className="mt-1 font-serif text-2xl font-black text-stone-900">{order.status}</p>
+              </div>
+              <ol className="space-y-4">
+                {steps.map((step, index) => {
+                  const complete = activeStep >= index;
+                  return <li key={step} className="flex items-center gap-3"><span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-black ${complete ? 'bg-emerald-600 text-white' : 'bg-stone-100 text-stone-400'}`}>{complete ? '✓' : index + 1}</span><span className={`text-sm font-bold ${complete ? 'text-stone-900' : 'text-stone-400'}`}>{step}</span></li>;
+                })}
+              </ol>
+              {order.status === 'Out for Delivery' && order.riderName && <div className="mt-6 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm"><p className="font-bold text-blue-900">Your rider: {order.riderName}</p>{order.riderPhone && <a className="mt-1 inline-block text-blue-700 underline" href={`tel:${order.riderPhone}`}>{order.riderPhone}</a>}</div>}
+              <div className="mt-7 border-t border-stone-100 pt-5"><p className="text-xs font-black uppercase tracking-wider text-stone-400">Delivery to</p><p className="mt-1 text-sm text-stone-700">{order.deliveryAddress}</p><ul className="mt-4 space-y-1 text-xs text-stone-600">{order.items?.map((item, index) => <li key={`${item.name}-${index}`}>{item.quantity}× {item.name} ({item.size})</li>)}</ul><p className="mt-4 font-serif text-lg font-black">Total paid: ₹{order.totalAmount}</p></div>
+            </>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<CustomerApp />} />
+        <Route path="/admin" element={<AdminDashboard />} />
+        <Route path="/track/:orderId" element={<OrderTrackingPage />} />
+        <Route path="*" element={<main className="min-h-screen bg-stone-100 p-10 text-center text-stone-700">Page not found.</main>} />
+      </Routes>
+    </BrowserRouter>
   );
 }

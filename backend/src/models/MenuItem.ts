@@ -15,6 +15,7 @@ export interface IMenuItem {
   imageUrl?: string;
   isVeg: boolean;
   isAvailable: boolean;
+  available?: boolean;
   variants: IPriceVariant[];
 }
 
@@ -29,6 +30,7 @@ const MenuItemSchema = new Schema<MenuItemDocument>(
     imageUrl: { type: String, default: "" },
     isVeg: { type: Boolean, default: false },
     isAvailable: { type: Boolean, default: true },
+    available: { type: Boolean, default: undefined },
     variants: [
       {
         size: { type: String, required: true },

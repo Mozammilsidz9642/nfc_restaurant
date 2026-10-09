@@ -1,5 +1,30 @@
 import nodemailer from "nodemailer";
 
+function createEmailTransporter() {
+  const emailUser = process.env.EMAIL_USER?.trim();
+  const emailPass = process.env.EMAIL_PASS?.trim();
+  if (!emailUser || !emailPass) {
+    throw new Error("Email delivery is not configured");
+  }
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: emailUser, pass: emailPass },
+  });
+}
+
+export async function sendManagerPasswordResetOtp(toEmail: string, otp: string): Promise<void> {
+  const emailUser = process.env.EMAIL_USER?.trim();
+  if (!emailUser) throw new Error("Email delivery is not configured");
+  const transporter = createEmailTransporter();
+  await transporter.sendMail({
+    from: `"NFC Partner" <${emailUser}>`,
+    to: toEmail,
+    subject: "NFC Partner - Manager Password Reset OTP",
+    text: `Your NFC Partner password reset code is ${otp}. It expires in 10 minutes. If you did not request this, you can ignore this email.`,
+    html: `<p>Your NFC Partner password reset code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes. If you did not request this, you can ignore this email.</p>`,
+  });
+}
+
 export async function sendOrderEmail(
   toEmail: string,
   customerName: string,
@@ -16,10 +41,7 @@ export async function sendOrderEmail(
   }
 
   try {
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: emailUser, pass: emailPass },
-    });
+    const transporter = createEmailTransporter();
 
     await transporter.sendMail({
       from: `"Noida Fried Chicken" <${emailUser}>`,

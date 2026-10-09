@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { X, ShoppingBag, ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useCart } from '../../context/useCart';
@@ -20,6 +20,14 @@ type ConfirmedOrder = {
   trackingUrl: string;
   totalAmount: number;
   itemCount: number;
+};
+
+type LiveMenuAvailability = {
+  id?: string;
+  _id?: string;
+  name: string;
+  isAvailable?: boolean;
+  available?: boolean;
 };
 
 function loadRazorpay(): Promise<boolean> {
@@ -58,10 +66,57 @@ export function CartDrawer() {
   const [customerEmail, setCustomerEmail] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [checkoutError, setCheckoutError] = useState('');
+  const [storeIsOpen, setStoreIsOpen] = useState<boolean | null>(null);
+  const [stockIssues, setStockIssues] = useState<string[]>([]);
+  const [availabilityError, setAvailabilityError] = useState('');
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrder | null>(null);
   const deliveryCharge = cart.length > 0 ? DELIVERY_FEE : 0;
   const grandTotal = billSummary.grandTotal + deliveryCharge;
+
+  const refreshLiveGuards = useCallback(async () => {
+    const [storeResponse, menuResponse] = await Promise.all([
+      fetch('http://localhost:5000/api/store/status'),
+      fetch('http://localhost:5000/api/menu'),
+    ]);
+    if (!storeResponse.ok || !menuResponse.ok) {
+      throw new Error('Could not verify live store and menu availability. Please retry.');
+    }
+    const [storeResult, menuResult] = await Promise.all([storeResponse.json(), menuResponse.json()]);
+    if (typeof storeResult.isStoreOpen !== 'boolean') {
+      throw new Error('Live store status is unavailable. Please retry.');
+    }
+    const liveMenu: LiveMenuAvailability[] = Array.isArray(menuResult) ? menuResult : menuResult.items || [];
+    const unavailable = cart.filter((cartItem) => {
+      const currentItem = liveMenu.find((item) =>
+        (item.id || item._id) === cartItem.itemId || item.name.toLowerCase() === cartItem.name.toLowerCase()
+      );
+      return !currentItem || (currentItem.isAvailable ?? currentItem.available ?? true) === false;
+    }).map((item) => item.name);
+
+    setStoreIsOpen(storeResult.isStoreOpen);
+    setStockIssues([...new Set(unavailable)]);
+    setAvailabilityError('');
+    return { isStoreOpen: storeResult.isStoreOpen as boolean, unavailableItems: [...new Set(unavailable)] };
+  }, [cart]);
+
+  useEffect(() => {
+    if (!isCartOpen || cart.length === 0) return;
+    let isActive = true;
+    const refresh = async () => {
+      try {
+        await refreshLiveGuards();
+      } catch (error) {
+        if (isActive) setAvailabilityError(error instanceof Error ? error.message : 'Could not verify live availability.');
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 12_000);
+    return () => {
+      isActive = false;
+      window.clearInterval(timer);
+    };
+  }, [isCartOpen, cart.length, refreshLiveGuards]);
 
   // Close on Escape key
   useEffect(() => {
@@ -100,6 +155,14 @@ export function CartDrawer() {
 
     setIsCheckingOut(true);
     try {
+      const liveGuards = await refreshLiveGuards();
+      if (!liveGuards.isStoreOpen) {
+        throw new Error('The restaurant is currently closed and cannot accept new orders.');
+      }
+      if (liveGuards.unavailableItems.length > 0) {
+        throw new Error(`Out of stock: ${liveGuards.unavailableItems.join(', ')}. Remove these items to continue.`);
+      }
+
       // The backend validates itemsTotal against menu item prices. Existing GST and
       // bill charges are included in deliveryFee so the amount matches the displayed total.
       const itemsTotal = billSummary.itemTotal;
@@ -329,6 +392,10 @@ export function CartDrawer() {
             </div>
 
             <div className="p-4 bg-white border-t border-stone-200 shadow-luxury space-y-3 shrink-0 safe-bottom">
+              {storeIsOpen === null && !availabilityError && <p className="text-xs text-stone-500">Checking live store and stock availability…</p>}
+              {availabilityError && <p role="alert" className="text-xs font-medium text-red-700">{availabilityError}</p>}
+              {storeIsOpen === false && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700">The restaurant is currently closed. Online ordering is paused.</p>}
+              {stockIssues.length > 0 && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">Out of stock: {stockIssues.join(', ')}. Remove these items from your cart.</p>}
               {checkoutError && <p role="alert" className="text-xs text-red-700 font-medium">{checkoutError}</p>}
               <div className="flex justify-between items-baseline">
                 <span className="text-xs font-semibold text-stone-500">Grand Total</span>
@@ -337,7 +404,7 @@ export function CartDrawer() {
               <button
                 type="button"
                 onClick={handleCheckoutClick}
-                disabled={isCheckingOut}
+                disabled={isCheckingOut || storeIsOpen !== true || stockIssues.length > 0 || !!availabilityError}
                 className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 disabled:opacity-60 text-white font-bold text-sm tracking-wide shadow-md shadow-orange-500/20 flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer"
               >
                 <span>{isCheckingOut ? 'Connecting to Payment…' : 'Proceed to Checkout'}</span>

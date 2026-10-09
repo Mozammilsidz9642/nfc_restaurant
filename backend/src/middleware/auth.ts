@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import jwt, { type JwtPayload } from "jsonwebtoken";
+import { Manager } from "../models/Manager";
 
 export interface AuthUser extends JwtPayload {
   id: string;
@@ -11,11 +12,11 @@ export interface AuthRequest extends Request {
   user?: AuthUser;
 }
 
-export function protectManager(
+export async function protectManager(
   req: AuthRequest,
   res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   const authorization = req.headers.authorization;
   const [scheme, token] = authorization?.split(" ") ?? [];
 
@@ -27,29 +28,44 @@ export function protectManager(
     return;
   }
 
+  const secret = process.env.JWT_SECRET || (process.env.NODE_ENV === "production" ? "" : "nfc_super_secure_secret_key_2026");
+  if (!secret) {
+    res.status(500).json({ success: false, message: "Manager authentication is not configured" });
+    return;
+  }
+
+  let decoded: string | JwtPayload;
   try {
-    const secret = process.env.JWT_SECRET || "nfc_super_secure_secret_key_2026";
-    const decoded = jwt.verify(token, secret);
-
-    if (
-      typeof decoded === "string" ||
-      typeof decoded.id !== "string" ||
-      typeof decoded.username !== "string" ||
-      typeof decoded.role !== "string"
-    ) {
-      res.status(401).json({
-        success: false,
-        message: "Unauthorized: Invalid or expired token",
-      });
-      return;
-    }
-
-    req.user = decoded as AuthUser;
-    next();
-  } catch {
+    decoded = jwt.verify(token, secret);
+  } catch (error) {
+    console.warn("Manager auth rejected an invalid token:", error);
     res.status(401).json({
       success: false,
       message: "Unauthorized: Invalid or expired token",
     });
+    return;
+  }
+
+  if (
+    typeof decoded === "string" ||
+    typeof decoded.id !== "string" ||
+    typeof decoded.username !== "string" ||
+    typeof decoded.role !== "string"
+  ) {
+    res.status(401).json({ success: false, message: "Unauthorized: Invalid manager token payload" });
+    return;
+  }
+
+  try {
+    const manager = await Manager.exists({ _id: decoded.id });
+    if (!manager) {
+      res.status(401).json({ success: false, message: "Unauthorized: Manager account not found" });
+      return;
+    }
+    req.user = decoded as AuthUser;
+    next();
+  } catch (error) {
+    console.error("Manager auth could not verify the Manager record:", error);
+    res.status(500).json({ success: false, message: "Could not validate manager account" });
   }
 }

@@ -4,12 +4,13 @@ import dotenv from "dotenv";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import Razorpay from "razorpay";
-import { createHmac, timingSafeEqual } from "crypto";
+import bcrypt from "bcryptjs";
+import { createHmac, randomInt, timingSafeEqual } from "crypto";
 import MenuItem from "./models/MenuItem";
 import Order from "./models/Order";
-import { Admin } from "./models/Admin";
+import { Manager } from "./models/Manager";
 import { StoreSettings } from "./models/StoreSettings";
-import { sendOrderEmail } from "./utils/email";
+import { sendManagerPasswordResetOtp, sendOrderEmail } from "./utils/email";
 import { sendOrderSMS } from "./utils/sms";
 import { sendOrderWhatsApp } from "./utils/whatsapp";
 import { dispatchShadowfaxOrder } from "./utils/shadowfax";
@@ -20,7 +21,10 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || "nfc_super_secure_secret_key_2026";
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === "production" ? "" : "nfc_super_secure_secret_key_2026");
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET must be configured in production");
+}
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_dummy_key",
   key_secret: process.env.RAZORPAY_KEY_SECRET || "dummy_secret",
@@ -49,16 +53,6 @@ mongoose
       await StoreSettings.create({ isStoreOpen: true });
     }
 
-    // Default Manager Admin agar nahi bana toh
-    const adminCount = await Admin.countDocuments();
-    if (adminCount === 0) {
-      await Admin.create({
-        username: "nfcmanager",
-        password: "NfcPassword@123", // Baad mein dashboard se change ho sakta hai
-        role: "manager",
-      });
-      console.log("Default Manager Created: username 'nfcmanager'");
-    }
   })
   .catch((err) => {
     console.warn("MongoDB Connection Warning (running in resilient mode):", err.message);
@@ -301,6 +295,7 @@ app.post("/api/payment/verify-and-place-order", async (req: Request, res: Respon
     const trackingUrl = `https://track.nfcorders.in/order/${orderIdToken}`;
     const newOrder = new Order({
       orderId: orderIdToken,
+      orderToken: orderIdToken,
       customerName,
       customerPhone,
       customerEmail: customerEmail || "",
@@ -445,35 +440,176 @@ app.post("/api/orders", (_req: Request, res: Response): void => {
   });
 });
 
-// 4. MANAGER AUTH: Login
-app.post("/api/admin/login", async (req: Request, res: Response): Promise<void> => {
-  const { username, password } = req.body;
+// 4. MANAGER AUTH: One-time setup, login, and password reset
+app.get("/api/admin/auth-status", async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const initialized = (await Manager.exists({})) !== null;
+    res.json({ initialized });
+  } catch (error) {
+    console.error("Manager Auth Status Error:", error);
+    res.status(500).json({ success: false, message: "Could not check manager setup status" });
+  }
+});
+
+app.post("/api/admin/setup", async (req: Request, res: Response): Promise<void> => {
+  const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  const phone = typeof req.body?.phone === "string" ? req.body.phone.replace(/\D/g, "") : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+
+  if (!username || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{10}$/.test(phone) || password.length < 8) {
+    res.status(400).json({ success: false, message: "Enter a username, valid email, 10-digit phone, and password with at least 8 characters." });
+    return;
+  }
 
   try {
-    const admin = await Admin.findOne({ username });
-    if (!admin) {
-      res.status(401).json({ success: false, message: "Invalid credentials" });
+    await Manager.init();
+    if (await Manager.exists({})) {
+      res.status(409).json({ success: false, message: "Manager setup has already been completed." });
       return;
     }
 
-    const isMatch = await admin.comparePassword(password);
-    if (!isMatch) {
-      res.status(401).json({ success: false, message: "Invalid credentials" });
-      return;
-    }
-
-    const token = jwt.sign({ id: admin._id, username: admin.username, role: admin.role }, JWT_SECRET, {
-      expiresIn: "30d", // Manager baar baar phone pe log out na ho
+    const manager = await Manager.create({
+      username,
+      email,
+      phone,
+      passwordHash: await bcrypt.hash(password, 12),
     });
+    const token = jwt.sign(
+      { id: manager._id.toString(), username: manager.username, email: manager.email, role: "manager" },
+      JWT_SECRET,
+      { expiresIn: "12h" }
+    );
+    res.status(201).json({
+      success: true,
+      token,
+      manager: { id: manager._id.toString(), username: manager.username, email: manager.email, phone: manager.phone },
+    });
+  } catch (error: any) {
+    if (error?.code === 11000) {
+      res.status(409).json({ success: false, message: "Manager setup is complete or that username/email is already registered." });
+      return;
+    }
+    console.error("Manager Setup Error:", error);
+    res.status(500).json({ success: false, message: "Could not create manager account" });
+  }
+});
 
+app.post("/api/admin/login", async (req: Request, res: Response): Promise<void> => {
+  const loginId = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!loginId || !password) {
+    res.status(400).json({ success: false, message: "Username and password are required." });
+    return;
+  }
+
+  try {
+    const manager = await Manager.findOne({
+      $or: [{ username: loginId }, { email: loginId.toLowerCase() }],
+    });
+    if (!manager || !(await bcrypt.compare(password, manager.passwordHash))) {
+      res.status(401).json({ success: false, message: "Invalid username or password." });
+      return;
+    }
+
+    const token = jwt.sign(
+      { id: manager._id.toString(), username: manager.username, email: manager.email, role: "manager" },
+      JWT_SECRET,
+      { expiresIn: "12h" }
+    );
     res.json({
       success: true,
-      message: "Login successful",
       token,
-      admin: { username: admin.username, role: admin.role },
+      manager: { id: manager._id.toString(), username: manager.username, email: manager.email, phone: manager.phone },
     });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Login error", error: err });
+  } catch (error) {
+    console.error("Manager Login Error:", error);
+    res.status(500).json({ success: false, message: "Could not sign in" });
+  }
+});
+
+app.post("/api/admin/forgot-password/send-otp", async (req: Request, res: Response): Promise<void> => {
+  const usernameOrEmail = typeof req.body?.usernameOrEmail === "string" ? req.body.usernameOrEmail.trim() : "";
+  if (!usernameOrEmail) {
+    res.status(400).json({ success: false, message: "Enter your username or registered email." });
+    return;
+  }
+
+  try {
+    const manager = await Manager.findOne({
+      $or: [{ username: usernameOrEmail }, { email: usernameOrEmail.toLowerCase() }],
+    });
+    if (!manager) {
+      // Keep the response shape consistent so account lookup cannot be used to enumerate managers.
+      res.json({ success: true, maskedEmail: "your registered email" });
+      return;
+    }
+
+    const otp = randomInt(100000, 1000000).toString();
+    manager.resetOtp = await bcrypt.hash(otp, 10);
+    manager.resetOtpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    manager.resetOtpAttempts = 0;
+    await manager.save();
+    try {
+      await sendManagerPasswordResetOtp(manager.email, otp);
+    } catch (mailError) {
+      manager.resetOtp = null;
+      manager.resetOtpExpires = null;
+      manager.resetOtpAttempts = 0;
+      await manager.save();
+      console.error("Manager Reset OTP Email Error:", mailError);
+      res.status(503).json({ success: false, message: "Could not send the reset email. Please try again later." });
+      return;
+    }
+
+    const [localPart, domain] = manager.email.split("@");
+    const maskedLocal = localPart.length <= 2
+      ? `${localPart[0] || "*"}***`
+      : `${localPart[0]}***${localPart[localPart.length - 1]}`;
+    res.json({ success: true, maskedEmail: `${maskedLocal}@${domain}` });
+  } catch (error) {
+    console.error("Manager Reset OTP Error:", error);
+    res.status(500).json({ success: false, message: "Could not send password reset code" });
+  }
+});
+
+app.post("/api/admin/forgot-password/verify-and-reset", async (req: Request, res: Response): Promise<void> => {
+  const usernameOrEmail = typeof req.body?.usernameOrEmail === "string" ? req.body.usernameOrEmail.trim() : "";
+  const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
+  const newPassword = typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+  if (!usernameOrEmail || !/^\d{6}$/.test(otp) || newPassword.length < 8) {
+    res.status(400).json({ success: false, message: "Enter the 6-digit code and a password with at least 8 characters." });
+    return;
+  }
+
+  try {
+    const manager = await Manager.findOne({
+      $or: [{ username: usernameOrEmail }, { email: usernameOrEmail.toLowerCase() }],
+    });
+    if (
+      !manager || !manager.resetOtp || !manager.resetOtpExpires ||
+      manager.resetOtpExpires.getTime() <= Date.now() || manager.resetOtpAttempts >= 5
+    ) {
+      res.status(400).json({ success: false, message: "The code is invalid or expired. Request a new code and try again." });
+      return;
+    }
+
+    if (!(await bcrypt.compare(otp, manager.resetOtp))) {
+      manager.resetOtpAttempts += 1;
+      await manager.save();
+      res.status(400).json({ success: false, message: "The code is invalid or expired. Request a new code and try again." });
+      return;
+    }
+
+    manager.passwordHash = await bcrypt.hash(newPassword, 12);
+    manager.resetOtp = null;
+    manager.resetOtpExpires = null;
+    manager.resetOtpAttempts = 0;
+    await manager.save();
+    res.json({ success: true, message: "Password updated successfully" });
+  } catch (error) {
+    console.error("Manager Password Reset Error:", error);
+    res.status(500).json({ success: false, message: "Could not reset password" });
   }
 });
 
@@ -490,24 +626,41 @@ app.get("/api/admin/orders", protectManager, async (_req: AuthRequest, res: Resp
 // 6. MANAGER PROTECTED: Update Order Status (Placed -> Preparing -> Out for Delivery -> Delivered)
 app.patch("/api/orders/:id/status", protectManager, async (req: AuthRequest, res: Response): Promise<void> => {
   const { status, riderName, riderPhone } = req.body;
-  const { id } = req.params;
+  const targetId = req.params.id;
 
   try {
-    const order = await Order.findById(id);
-    if (!order) {
-      res.status(404).json({ success: false, message: "Order not found" });
+    console.log(`[Status Update Attempt]: ID = ${targetId}, New Status = ${status}`);
+
+    const updateFields: Record<string, any> = {};
+    if (status) updateFields.status = status;
+    if (riderName !== undefined) updateFields.riderName = riderName;
+    if (riderPhone !== undefined) updateFields.riderPhone = riderPhone;
+
+    const query = {
+      $or: [
+        ...(mongoose.isValidObjectId(targetId) ? [{ _id: targetId }] : []),
+        { orderId: targetId },
+        { orderToken: targetId },
+      ],
+    };
+
+    const updatedOrder = await Order.findOneAndUpdate(
+      query,
+      { $set: updateFields },
+      { new: true, runValidators: false }
+    );
+
+    if (!updatedOrder) {
+      console.warn(`[Status Update Failed]: Order not found for ${targetId}`);
+      res.status(404).json({ success: false, message: `Order not found with ID ${targetId}` });
       return;
     }
 
-    if (status) order.status = status;
-    if (riderName) order.riderName = riderName;
-    if (riderPhone) order.riderPhone = riderPhone;
-
-    await order.save();
-    console.log(`[Order Status Updated]: #${order.orderId} -> ${status}`);
-    res.json({ success: true, message: `Status updated to ${status}`, order });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Failed to update order status", error: err });
+    console.log(`[Status Updated Successfully]: ID ${targetId} -> ${status}`);
+    res.json({ success: true, message: `Status updated to ${status}`, order: updatedOrder });
+  } catch (err: any) {
+    console.error("[Status Update 500 Error]:", err);
+    res.status(500).json({ success: false, message: err.message || "Failed to update order status" });
   }
 });
 
@@ -534,9 +687,14 @@ app.post("/api/store/status", protectManager, async (req: AuthRequest, res: Resp
 });
 
 // 8. MANAGER PROTECTED: Toggle Item In-Stock / Out-of-Stock
-app.patch("/api/menu/:id/stock", protectManager, async (req: AuthRequest, res: Response): Promise<void> => {
-  const { isAvailable } = req.body;
+const updateMenuAvailability = async (req: AuthRequest, res: Response): Promise<void> => {
+  const isAvailable = req.body.isAvailable ?? req.body.available;
   const { id } = req.params;
+
+  if (typeof isAvailable !== "boolean") {
+    res.status(400).json({ success: false, message: "isAvailable must be a boolean" });
+    return;
+  }
 
   try {
     const item = await MenuItem.findById(id);
@@ -546,13 +704,18 @@ app.patch("/api/menu/:id/stock", protectManager, async (req: AuthRequest, res: R
     }
 
     item.isAvailable = isAvailable;
+    item.available = isAvailable;
     await item.save();
     console.log(`[Menu Item Stock Changed]: ${item.name} -> Available: ${item.isAvailable}`);
     res.json({ success: true, item });
   } catch (err) {
     res.status(500).json({ success: false, message: "Failed to update stock", error: err });
   }
-});
+};
+
+app.patch("/api/menu/:id/stock", protectManager, updateMenuAvailability);
+app.patch("/api/menu/:id/toggle", protectManager, updateMenuAvailability);
+app.patch("/api/menu/:id/availability", protectManager, updateMenuAvailability);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

@@ -1,0 +1,20 @@
+{
+  "id": "/admin",
+  "name": "NFC Partner — Manager & Kitchen",
+  "short_name": "NFC Partner",
+  "description": "Manage NFC online orders and kitchen operations.",
+  "start_url": "/admin",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#faf9f6",
+  "theme_color": "#991b1b",
+  "icons": [
+    {
+      "src": "/nfc-partner.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
