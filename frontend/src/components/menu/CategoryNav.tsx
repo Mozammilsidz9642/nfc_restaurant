@@ -15,6 +15,9 @@ const CATEGORY_IMAGES: Record<string, string> = {
   Starters: 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?auto=format&fit=crop&w=160&q=80',
   'Main Course': 'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?auto=format&fit=crop&w=160&q=80',
   'Roti / Bread': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=160&q=80',
+  Breads: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=160&q=80',
+  'Rice & Daal': 'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?auto=format&fit=crop&w=160&q=80',
+  Sides: 'https://images.unsplash.com/photo-1596797038530-2c107229654b?auto=format&fit=crop&w=160&q=80',
 };
 
 export function CategoryNav({

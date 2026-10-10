@@ -22,7 +22,7 @@ import { AlertCircle, RefreshCw } from 'lucide-react';
 import { BrowserRouter, Route, Routes, useParams } from 'react-router-dom';
 import AdminDashboard from './pages/AdminDashboard';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000') + '/api';
 
 function MenuAppContent() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -86,7 +86,7 @@ function MenuAppContent() {
     for (const cat of CATEGORIES) {
       if (cat === 'All') continue;
       counts[cat] = menuItems.filter((i) => {
-        if (cat === 'Roti / Bread') {
+        if (cat === 'Breads' || (cat as string) === 'Roti / Bread') {
           return i.category === 'Roti / Bread' || i.category === 'Breads' || i.category === 'Bread';
         }
         return i.category.toLowerCase() === cat.toLowerCase();

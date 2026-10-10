@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, ShoppingBag, ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
+import { X, ShoppingBag, ArrowRight, Sparkles, CheckCircle2, Mail, ShieldCheck, RotateCcw, ArrowLeft } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useCart } from '../../context/useCart';
 import { CartItem } from './CartItem';
@@ -7,13 +7,40 @@ import { BillSummary } from './BillSummary';
 import { EmptyState } from '../common/EmptyState';
 
 const DELIVERY_FEE = 40;
-const PAYMENT_API = 'http://localhost:5000/api/payment';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const PAYMENT_API = `${API_BASE}/api/payment`;
 
 type RazorpayResponse = {
   razorpay_order_id: string;
   razorpay_payment_id: string;
   razorpay_signature: string;
 };
+
+interface RazorpayInstance {
+  open: () => void;
+}
+
+interface RazorpayOptions {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  handler: (payment: RazorpayResponse) => void | Promise<void>;
+  modal?: { ondismiss?: () => void };
+  theme?: { color?: string };
+}
+
+interface RazorpayConstructor {
+  new (options: RazorpayOptions): RazorpayInstance;
+}
+
+declare global {
+  interface Window {
+    Razorpay?: RazorpayConstructor;
+  }
+}
 
 type ConfirmedOrder = {
   orderId: string;
@@ -31,14 +58,14 @@ type LiveMenuAvailability = {
 };
 
 function loadRazorpay(): Promise<boolean> {
-  if ((window as any).Razorpay) return Promise.resolve(true);
+  if (window.Razorpay) return Promise.resolve(true);
 
   return new Promise((resolve) => {
     const existingScript = document.querySelector<HTMLScriptElement>(
       'script[src="https://checkout.razorpay.com/v1/checkout.js"]'
     );
     if (existingScript) {
-      existingScript.addEventListener('load', () => resolve(!!(window as any).Razorpay), { once: true });
+      existingScript.addEventListener('load', () => resolve(Boolean(window.Razorpay)), { once: true });
       existingScript.addEventListener('error', () => resolve(false), { once: true });
       return;
     }
@@ -46,7 +73,7 @@ function loadRazorpay(): Promise<boolean> {
     const script = document.createElement('script');
     script.src = 'https://checkout.razorpay.com/v1/checkout.js';
     script.async = true;
-    script.onload = () => resolve(!!(window as any).Razorpay);
+    script.onload = () => resolve(Boolean(window.Razorpay));
     script.onerror = () => resolve(false);
     document.body.appendChild(script);
   });
@@ -71,13 +98,31 @@ export function CartDrawer() {
   const [availabilityError, setAvailabilityError] = useState('');
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrder | null>(null);
+  const [isEmailVerified, setIsEmailVerified] = useState(false);
+  const [verifiedEmail, setVerifiedEmail] = useState('');
+  const [otpStep, setOtpStep] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpTimer, setOtpTimer] = useState(0);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [otpError, setOtpError] = useState('');
+  const [otpSuccessMessage, setOtpSuccessMessage] = useState('');
+
   const deliveryCharge = cart.length > 0 ? DELIVERY_FEE : 0;
   const grandTotal = billSummary.grandTotal + deliveryCharge;
 
+  useEffect(() => {
+    if (otpTimer <= 0) return;
+    const interval = setInterval(() => {
+      setOtpTimer((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [otpTimer]);
+
   const refreshLiveGuards = useCallback(async () => {
     const [storeResponse, menuResponse] = await Promise.all([
-      fetch('http://localhost:5000/api/store/status'),
-      fetch('http://localhost:5000/api/menu'),
+      fetch(`${API_BASE}/api/store/status`),
+      fetch(`${API_BASE}/api/menu`),
     ]);
     if (!storeResponse.ok || !menuResponse.ok) {
       throw new Error('Could not verify live store and menu availability. Please retry.');
@@ -127,31 +172,12 @@ export function CartDrawer() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCartOpen, setIsCartOpen]);
 
-  if (!isCartOpen) return null;
-
-  const handleCheckoutClick = async () => {
+  const proceedToPaymentFlow = async () => {
     setCheckoutError('');
     const name = customerName.trim();
     const phone = customerPhone.replace(/\D/g, '');
     const email = customerEmail.trim();
     const address = deliveryAddress.trim();
-
-    if (!name) {
-      setCheckoutError('Please enter your full name.');
-      return;
-    }
-    if (!/^\d{10}$/.test(phone)) {
-      setCheckoutError('Please enter a valid 10-digit phone number.');
-      return;
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setCheckoutError('Please enter a valid email address.');
-      return;
-    }
-    if (!address) {
-      setCheckoutError('Please enter your full delivery address.');
-      return;
-    }
 
     setIsCheckingOut(true);
     try {
@@ -163,8 +189,6 @@ export function CartDrawer() {
         throw new Error(`Out of stock: ${liveGuards.unavailableItems.join(', ')}. Remove these items to continue.`);
       }
 
-      // The backend validates itemsTotal against menu item prices. Existing GST and
-      // bill charges are included in deliveryFee so the amount matches the displayed total.
       const itemsTotal = billSummary.itemTotal;
       const deliveryFee = billSummary.grandTotal - billSummary.itemTotal + deliveryCharge;
       const createResponse = await fetch(`${PAYMENT_API}/create-order`, {
@@ -218,12 +242,26 @@ export function CartDrawer() {
         }
       };
 
+      if (paymentOrder.isMock || paymentOrder.keyId === 'rzp_test_mock' || !paymentOrder.keyId || String(paymentOrder.keyId).startsWith('rzp_test_sample')) {
+        await placeOrder({
+          razorpay_order_id: paymentOrder.razorpayOrderId,
+          razorpay_payment_id: `pay_mock_${Date.now()}`,
+          razorpay_signature: `mock_sig_${Date.now()}`,
+        });
+        setIsCheckingOut(false);
+        return;
+      }
+
       const sdkReady = await loadRazorpay();
       if (!sdkReady) {
         throw new Error('Razorpay checkout could not be loaded. Please try again.');
       }
 
-      new (window as any).Razorpay({
+      if (!window.Razorpay) {
+        throw new Error('Razorpay checkout could not be loaded. Please try again.');
+      }
+
+      new window.Razorpay({
         key: paymentOrder.keyId,
         amount: paymentOrder.amount,
         currency: paymentOrder.currency || 'INR',
@@ -251,6 +289,126 @@ export function CartDrawer() {
       setIsCheckingOut(false);
     }
   };
+
+  const handleSendOtp = async (isResend = false) => {
+    const email = customerEmail.trim();
+    const name = customerName.trim();
+    const phone = customerPhone.replace(/\D/g, '');
+    const address = deliveryAddress.trim();
+
+    if (!name) {
+      setCheckoutError('Please enter your full name.');
+      return;
+    }
+    if (!/^\d{10}$/.test(phone)) {
+      setCheckoutError('Please enter a valid 10-digit phone number.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setCheckoutError('Please enter a valid email address.');
+      return;
+    }
+    if (!address) {
+      setCheckoutError('Please enter your full delivery address.');
+      return;
+    }
+
+    setCheckoutError('');
+    setOtpError('');
+    setIsSendingOtp(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/customer/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, name, phone, address }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'Could not send verification code.');
+      }
+      setOtpStep(true);
+      setOtpTimer(30);
+      setOtpSuccessMessage(isResend ? 'New verification code sent!' : `Code sent to ${email}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to send OTP.';
+      if (otpStep) setOtpError(msg);
+      else setCheckoutError(msg);
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    const email = customerEmail.trim();
+    const name = customerName.trim();
+    const phone = customerPhone.replace(/\D/g, '');
+    const address = deliveryAddress.trim();
+    const otp = otpCode.trim();
+
+    if (!/^\d{6}$/.test(otp)) {
+      setOtpError('Please enter the 6-digit code received on your email.');
+      return;
+    }
+
+    setOtpError('');
+    setIsVerifyingOtp(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/customer/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp, name, phone, address }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'Invalid or expired verification code.');
+      }
+      setIsEmailVerified(true);
+      setVerifiedEmail(email);
+      setOtpStep(false);
+      // Proceed directly to payment
+      await proceedToPaymentFlow();
+    } catch (err) {
+      setOtpError(err instanceof Error ? err.message : 'Verification failed.');
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  const handleCheckoutClick = async () => {
+    setCheckoutError('');
+    const name = customerName.trim();
+    const phone = customerPhone.replace(/\D/g, '');
+    const email = customerEmail.trim();
+    const address = deliveryAddress.trim();
+
+    if (!name) {
+      setCheckoutError('Please enter your full name.');
+      return;
+    }
+    if (!/^\d{10}$/.test(phone)) {
+      setCheckoutError('Please enter a valid 10-digit phone number.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setCheckoutError('Please enter a valid email address.');
+      return;
+    }
+    if (!address) {
+      setCheckoutError('Please enter your full delivery address.');
+      return;
+    }
+
+    // Require email verification before proceeding to payment
+    if (!isEmailVerified || verifiedEmail.toLowerCase() !== email.toLowerCase()) {
+      await handleSendOtp();
+      return;
+    }
+
+    // Already verified: proceed to payment
+    await proceedToPaymentFlow();
+  };
+
+  if (!isCartOpen) return null;
 
   const handleResetAfterOrder = () => {
     setConfirmedOrder(null);
@@ -334,6 +492,70 @@ export function CartDrawer() {
           <div className="flex-1 flex items-center justify-center p-6">
             <EmptyState type="cart" onAction={() => setIsCartOpen(false)} actionText="Explore Dishes" />
           </div>
+        ) : otpStep ? (
+          <div className="flex-1 overflow-y-auto p-5 sm:p-6 flex flex-col justify-center items-center text-center space-y-4 animate-fadeIn">
+            <div className="w-16 h-16 rounded-2xl bg-amber-100 border border-amber-300 text-amber-800 flex items-center justify-center shadow-xs">
+              <Mail className="w-8 h-8" />
+            </div>
+            <div className="space-y-1">
+              <span className="text-[11px] font-bold text-amber-700 uppercase tracking-widest block">Security Verification</span>
+              <h3 className="font-serif font-black text-2xl text-stone-900">Verify Your Email</h3>
+              <p className="text-xs text-stone-500 max-w-xs leading-relaxed">
+                We sent a 6-digit confirmation code to <span className="font-bold text-stone-800">{customerEmail}</span> before payment.
+              </p>
+            </div>
+
+            <div className="w-full bg-white rounded-2xl p-5 border border-stone-200 shadow-sm space-y-4 text-left">
+              <div>
+                <label className="block text-[11px] font-bold text-stone-600 uppercase tracking-wider text-center mb-2">
+                  Enter 6-Digit Code
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  autoFocus
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="••••••"
+                  className="w-full text-center font-mono text-2xl tracking-[10px] font-black py-3 bg-stone-50 border-2 border-stone-200 focus:border-amber-600 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 text-stone-900 placeholder:tracking-normal placeholder:text-stone-300"
+                />
+              </div>
+
+              {otpError && <p role="alert" className="text-xs text-red-600 font-medium text-center">{otpError}</p>}
+              {otpSuccessMessage && !otpError && <p className="text-xs text-emerald-600 font-medium text-center">{otpSuccessMessage}</p>}
+
+              <button
+                type="button"
+                onClick={handleVerifyOtp}
+                disabled={isVerifyingOtp || otpCode.trim().length !== 6}
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-red-800 to-amber-700 hover:from-red-900 hover:to-amber-800 disabled:opacity-60 text-white font-bold text-xs uppercase tracking-wider shadow-md shadow-red-950/20 border border-amber-500/30 flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>{isVerifyingOtp ? 'Verifying Code…' : 'Verify & Proceed to Payment'}</span>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between w-full text-xs text-stone-500 pt-1">
+              <button
+                type="button"
+                onClick={() => setOtpStep(false)}
+                className="inline-flex items-center gap-1.5 text-stone-600 hover:text-stone-900 font-semibold cursor-pointer py-1 px-2 rounded-lg hover:bg-stone-200/50"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Edit Details</span>
+              </button>
+              <button
+                type="button"
+                disabled={otpTimer > 0 || isSendingOtp}
+                onClick={() => void handleSendOtp(true)}
+                className="inline-flex items-center gap-1.5 font-bold text-amber-700 hover:text-amber-800 disabled:text-stone-400 cursor-pointer disabled:cursor-not-allowed py-1 px-2 rounded-lg hover:bg-amber-50"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${isSendingOtp ? 'animate-spin' : ''}`} />
+                <span>{otpTimer > 0 ? `Resend code (${otpTimer}s)` : 'Resend Code'}</span>
+              </button>
+            </div>
+          </div>
         ) : (
           <>
             <div className="bg-white px-4 py-3 border-b border-stone-200 space-y-2 shrink-0">
@@ -357,15 +579,28 @@ export function CartDrawer() {
                     className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-hidden focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
                   />
                 </div>
-                <input
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                  placeholder="Customer Email"
-                  aria-label="Customer Email"
-                  type="email"
-                  autoComplete="email"
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-hidden focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-                />
+                <div className="relative">
+                  <input
+                    value={customerEmail}
+                    onChange={(e) => {
+                      setCustomerEmail(e.target.value);
+                      if (isEmailVerified && e.target.value.toLowerCase() !== verifiedEmail.toLowerCase()) {
+                        setIsEmailVerified(false);
+                      }
+                    }}
+                    placeholder="Customer Email"
+                    aria-label="Customer Email"
+                    type="email"
+                    autoComplete="email"
+                    className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-hidden focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                  />
+                  {isEmailVerified && customerEmail.toLowerCase() === verifiedEmail.toLowerCase() && (
+                    <span className="absolute right-2 top-2 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                      Verified
+                    </span>
+                  )}
+                </div>
                 <textarea
                   value={deliveryAddress}
                   onChange={(e) => setDeliveryAddress(e.target.value)}
@@ -404,10 +639,18 @@ export function CartDrawer() {
               <button
                 type="button"
                 onClick={handleCheckoutClick}
-                disabled={isCheckingOut || storeIsOpen !== true || stockIssues.length > 0 || !!availabilityError}
-                className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 disabled:opacity-60 text-white font-bold text-sm tracking-wide shadow-md shadow-orange-500/20 flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer"
+                disabled={isCheckingOut || isSendingOtp || storeIsOpen !== true || stockIssues.length > 0 || !!availabilityError}
+                className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-red-800 to-amber-700 hover:from-red-900 hover:to-amber-800 disabled:opacity-60 text-white font-bold text-sm tracking-wide shadow-md shadow-red-950/20 border border-amber-500/30 flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer"
               >
-                <span>{isCheckingOut ? 'Connecting to Payment…' : 'Proceed to Checkout'}</span>
+                <span>
+                  {isCheckingOut
+                    ? 'Connecting to Payment…'
+                    : isSendingOtp
+                    ? 'Sending Verification Code…'
+                    : isEmailVerified && customerEmail.toLowerCase() === verifiedEmail.toLowerCase()
+                    ? 'Proceed to Payment'
+                    : 'Verify Email & Proceed'}
+                </span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>

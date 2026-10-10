@@ -310,7 +310,7 @@ function ProductDetailModalContent({
             <button
               type="button"
               onClick={handleAddToCart}
-              className="flex-1 max-w-xs py-3.5 px-6 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-xs sm:text-sm tracking-wide shadow-md shadow-orange-500/25 flex items-center justify-center gap-2 active:scale-97 transition-all cursor-pointer"
+              className="flex-1 max-w-xs py-3.5 px-6 rounded-xl bg-gradient-to-r from-red-800 to-amber-700 hover:from-red-900 hover:to-amber-800 text-white font-bold text-xs sm:text-sm tracking-wide shadow-md shadow-red-950/30 flex items-center justify-center gap-2 active:scale-97 transition-all cursor-pointer border border-amber-500/30"
             >
               <span>Add to Cart</span>
               <span>•</span>

@@ -38,8 +38,8 @@ export function FloatingCart() {
             </div>
           </div>
 
-          {/* Right: Orange 'View Cart →' Pill Button */}
-          <div className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs px-4 py-2.5 rounded-full shadow-md transition-all group-hover:pr-3.5">
+          {/* Right: Restaurant theme 'View Cart →' Pill Button */}
+          <div className="flex items-center gap-1.5 bg-gradient-to-r from-red-800 to-amber-700 hover:from-red-900 hover:to-amber-800 text-white font-extrabold text-xs px-4 py-2.5 rounded-full shadow-md transition-all group-hover:pr-3.5 border border-amber-500/30">
             <span>View Cart</span>
             <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
           </div>

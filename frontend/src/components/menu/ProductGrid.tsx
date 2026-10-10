@@ -26,7 +26,7 @@ export function ProductGrid({
   // Normalize category name for breads (handles both "Roti / Bread" and backend "Breads")
   const matchesCategory = (itemCat: string, targetCat: CategoryName) => {
     if (targetCat === 'All') return true;
-    if (targetCat === 'Roti / Bread') {
+    if (targetCat === 'Roti / Bread' || targetCat === 'Breads') {
       return itemCat === 'Roti / Bread' || itemCat === 'Breads' || itemCat === 'Bread';
     }
     return itemCat.toLowerCase() === targetCat.toLowerCase();
@@ -88,8 +88,9 @@ export function ProductGrid({
         </h3>
         {onViewAll && (
           <button
+            type="button"
             onClick={onViewAll}
-            className="flex items-center gap-1 text-xs font-bold text-amber-700 hover:text-amber-800"
+            className="flex items-center gap-1 text-xs font-bold text-red-800 hover:text-red-900"
           >
             <span>View All</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -102,7 +103,7 @@ export function ProductGrid({
           On Tablet: 2 columns 
           On Desktop: 3 columns vertical cards 
       */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 items-stretch">
         {filteredItems.map((item) => (
           <ProductCard
             key={item.id || item._id}

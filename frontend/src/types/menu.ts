@@ -31,4 +31,12 @@ export interface MenuItem {
   addons?: MenuAddon[];
 }
 
-export type CategoryName = 'All' | 'Starters' | 'Main Course' | 'Biryani' | 'Roti / Bread';
+export type CategoryName =
+  | 'All'
+  | 'Starters'
+  | 'Main Course'
+  | 'Biryani'
+  | 'Roti / Bread'
+  | 'Breads'
+  | 'Rice & Daal'
+  | 'Sides';

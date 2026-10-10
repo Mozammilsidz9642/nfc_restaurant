@@ -296,19 +296,26 @@ export const CATEGORIES = [
   'Starters',
   'Main Course',
   'Biryani',
-  'Roti / Bread',
+  'Breads',
+  'Rice & Daal',
+  'Sides',
 ] as const;
 
 export const RESTAURANT_INFO = {
   name: 'NFC',
   fullName: 'NOIDA FRIED CHICKEN',
-  tagline: 'Authentic North Indian & Mughlai Delicacies',
-  heroSubtitle: 'Freshly prepared. Richly spiced. Made to order over charcoal & clay tandoor.',
-  location: 'Sector 18, Central Noida, UP',
+  tagline: 'Good Food • Great Mood',
+  heroSubtitle: 'Freshly prepared crispy fried chicken, succulent tandoori kebabs & royal Mughlai curries.',
+  address: 'Shop no 7, 8, 9, KB Complex, Sector Alpha-2, Greater Noida',
+  location: 'KB Complex, Sector Alpha-2, Greater Noida',
+  phone: '+91 70113 77406',
+  phoneClean: '+917011377406',
+  email: 'noidafriedchicken@gmail.com',
   timing: '12:00 PM – 11:30 PM Everyday',
   rating: '4.8',
   totalReviews: '1,280+ Reviews',
   fssai: 'Lic. No. 12723055000412',
+  logo: '/logo.jpg',
   heroImage: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=1600&q=80',
 };
 

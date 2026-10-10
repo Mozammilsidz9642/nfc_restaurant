@@ -30,7 +30,7 @@ export function PromoSidebar({ onViewCombos }: PromoSidebarProps) {
           </div>
 
           {/* Dish Image */}
-          <div className="relative w-full aspect-16/10 rounded-2xl overflow-hidden my-3 border border-stone-800">
+          <div className="relative w-full h-40 rounded-2xl overflow-hidden my-3 border border-stone-800 bg-stone-900">
             <img
               src="https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80"
               alt="Special Combo Feast"
@@ -40,8 +40,9 @@ export function PromoSidebar({ onViewCombos }: PromoSidebarProps) {
           </div>
 
           <button
+            type="button"
             onClick={onViewCombos}
-            className="w-full py-2.5 px-4 rounded-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all cursor-pointer"
+            className="w-full py-2.5 px-4 rounded-full bg-gradient-to-r from-red-800 to-amber-700 hover:from-red-900 hover:to-amber-800 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all cursor-pointer border border-amber-500/30"
           >
             <span>View Combos</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -75,6 +76,7 @@ export function PromoSidebar({ onViewCombos }: PromoSidebarProps) {
               </span>
             </div>
             <button
+              type="button"
               onClick={handleCopyCode}
               className={`p-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer ${
                 copied
@@ -98,7 +100,7 @@ export function PromoSidebar({ onViewCombos }: PromoSidebarProps) {
           </div>
 
           {/* Feast Image */}
-          <div className="relative w-full aspect-16/9 rounded-2xl overflow-hidden my-2 border border-stone-800">
+          <div className="relative w-full h-36 rounded-2xl overflow-hidden my-2 border border-stone-800 bg-stone-900">
             <img
               src="https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?auto=format&fit=crop&w=600&q=80"
               alt="Tandoori Feast 20% OFF"
