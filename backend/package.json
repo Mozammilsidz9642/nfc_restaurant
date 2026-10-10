@@ -6,7 +6,10 @@
     "scripts": {
         "build": "tsc",
         "start": "node dist/server.js",
-        "dev": "tsx watch src/server.ts"
+        "dev": "tsx watch src/server.ts",
+        "migrate": "tsx src/scripts/migrate.ts",
+        "migrate:menu": "tsx src/scripts/migrate-menu.ts",
+        "migrate:customers": "tsx src/scripts/migrate-customers.ts"
     },
     "keywords": [],
     "author": "",
