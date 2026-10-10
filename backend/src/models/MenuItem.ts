@@ -13,6 +13,7 @@ export interface IMenuItem {
   description?: string;
   desc?: string;
   imageUrl?: string;
+  price?: number;
   isVeg: boolean;
   isAvailable: boolean;
   available?: boolean;
@@ -28,6 +29,7 @@ const MenuItemSchema = new Schema<MenuItemDocument>(
     description: { type: String, default: "" },
     desc: { type: String, default: "" },
     imageUrl: { type: String, default: "" },
+    price: { type: Number },
     isVeg: { type: Boolean, default: false },
     isAvailable: { type: Boolean, default: true },
     available: { type: Boolean, default: undefined },
