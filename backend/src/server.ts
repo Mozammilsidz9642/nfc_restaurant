@@ -14,7 +14,11 @@ import { StoreSettings } from "./models/StoreSettings";
 import { sendManagerPasswordResetOtp, sendOrderEmail, sendCustomerVerificationOtp } from "./utils/email";
 import { sendOrderSMS } from "./utils/sms";
 import { sendOrderWhatsApp } from "./utils/whatsapp";
-import { dispatchShadowfaxOrder } from "./utils/shadowfax";
+import {
+  cancelShadowfaxDelivery,
+  createShadowfaxDelivery,
+  trackShadowfaxDelivery,
+} from "./services/shadowfax";
 import { protectManager, AuthRequest } from "./middleware/auth";
 import { realNFCMenu } from "./seed";
 
@@ -378,8 +382,11 @@ app.post("/api/payment/verify-and-place-order", async (req: Request, res: Respon
       razorpayPaymentId,
       status: "Placed",
       trackingUrl,
-      riderName: "",
-      riderPhone: "",
+      shadowfaxOrderId: null,
+      shadowfaxTrackingUrl: null,
+      riderName: null,
+      riderPhone: null,
+      deliveryStatus: "ALLOCATING",
       createdAt: new Date().toISOString(),
     };
 
@@ -387,16 +394,6 @@ app.post("/api/payment/verify-and-place-order", async (req: Request, res: Respon
     if (mongoose.connection.readyState === 1) {
       const newOrder = new Order(orderData);
       await newOrder.save();
-
-      try {
-        const dispatchResult = await dispatchShadowfaxOrder(newOrder);
-        newOrder.trackingUrl = dispatchResult.trackingUrl;
-        newOrder.riderName = dispatchResult.riderName || "";
-        newOrder.riderPhone = dispatchResult.riderPhone || "";
-        await newOrder.save();
-      } catch (dispatchError: unknown) {
-        console.error("Shadowfax Dispatch Error:", dispatchError);
-      }
       confirmedOrder = newOrder;
     } else {
       const memOrder = {
@@ -646,6 +643,28 @@ app.get("/api/customer/status", async (req: Request, res: Response): Promise<voi
   }
 });
 
+const mapShadowfaxStatus = (status: string): string | null => {
+  switch (status.trim().toUpperCase()) {
+    case "DELIVERED":
+      return "Delivered";
+    case "CANCELLED":
+    case "CANCELED":
+      return "Cancelled";
+    case "PLACED":
+    case "ORDER_PLACED":
+      return "Placed";
+    case "PREPARING":
+      return "Preparing";
+    case "ALLOCATED":
+    case "ARRIVED_AT_STORE":
+    case "PICKED_UP":
+    case "OUT_FOR_DELIVERY":
+      return "Out for Delivery";
+    default:
+      return null;
+  }
+};
+
 // Public order tracking by order token or MongoDB document ID.
 app.get("/api/orders/track/:orderId", async (req: Request, res: Response): Promise<void> => {
   try {
@@ -662,6 +681,22 @@ app.get("/api/orders/track/:orderId", async (req: Request, res: Response): Promi
         (mongoose.Types.ObjectId.isValid(lookupId) ? await Order.findById(lookupId) : null);
 
       if (order) {
+        if (order.shadowfaxOrderId) {
+          try {
+            const liveDelivery = await trackShadowfaxDelivery(order.shadowfaxOrderId);
+            order.deliveryStatus = liveDelivery.deliveryStatus;
+            order.shadowfaxTrackingUrl = liveDelivery.trackingUrl || order.shadowfaxTrackingUrl;
+            order.riderName = liveDelivery.riderName || order.riderName;
+            order.riderPhone = liveDelivery.riderPhone || order.riderPhone;
+            order.riderLatitude = liveDelivery.riderLatitude ?? order.riderLatitude;
+            order.riderLongitude = liveDelivery.riderLongitude ?? order.riderLongitude;
+            const mappedStatus = mapShadowfaxStatus(liveDelivery.deliveryStatus);
+            if (mappedStatus) order.status = mappedStatus;
+            await order.save();
+          } catch (trackingError) {
+            console.warn("Shadowfax live tracking refresh failed:", trackingError);
+          }
+        }
         res.json({
           success: true,
           orderId: order.orderId,
@@ -672,8 +707,13 @@ app.get("/api/orders/track/:orderId", async (req: Request, res: Response): Promi
           totalAmount: order.totalAmount,
           deliveryFee: order.deliveryFee,
           trackingUrl: order.trackingUrl,
+          shadowfaxOrderId: order.shadowfaxOrderId,
+          shadowfaxTrackingUrl: order.shadowfaxTrackingUrl,
           riderName: order.riderName,
           riderPhone: order.riderPhone,
+          deliveryStatus: order.deliveryStatus,
+          riderLatitude: order.riderLatitude,
+          riderLongitude: order.riderLongitude,
           createdAt: order.createdAt,
         });
         return;
@@ -698,8 +738,13 @@ app.get("/api/orders/track/:orderId", async (req: Request, res: Response): Promi
       totalAmount: memOrder.totalAmount,
       deliveryFee: memOrder.deliveryFee,
       trackingUrl: memOrder.trackingUrl,
+      shadowfaxOrderId: memOrder.shadowfaxOrderId,
+      shadowfaxTrackingUrl: memOrder.shadowfaxTrackingUrl,
       riderName: memOrder.riderName,
       riderPhone: memOrder.riderPhone,
+      deliveryStatus: memOrder.deliveryStatus,
+      riderLatitude: memOrder.riderLatitude,
+      riderLongitude: memOrder.riderLongitude,
       createdAt: memOrder.createdAt,
     });
   } catch (error) {
@@ -709,7 +754,7 @@ app.get("/api/orders/track/:orderId", async (req: Request, res: Response): Promi
 });
 
 // Public Shadowfax status webhook.
-app.post("/api/webhook/shadowfax", async (req: Request, res: Response): Promise<void> => {
+const shadowfaxWebhook = async (req: Request, res: Response): Promise<void> => {
   try {
     const body: unknown = req.body;
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -717,36 +762,65 @@ app.post("/api/webhook/shadowfax", async (req: Request, res: Response): Promise<
       return;
     }
 
-    const data = body as Record<string, unknown>;
+    const envelope = body as Record<string, unknown>;
+    const data = envelope.data && typeof envelope.data === "object"
+      ? envelope.data as Record<string, unknown>
+      : envelope;
     const details = data.order_details && typeof data.order_details === "object"
       ? data.order_details as Record<string, unknown>
       : {};
     const rider = data.rider && typeof data.rider === "object"
       ? data.rider as Record<string, unknown>
       : {};
+    const riderDetails = data.rider_details && typeof data.rider_details === "object"
+      ? data.rider_details as Record<string, unknown>
+      : {};
+    const sfxOrderId = [data.sfx_order_id, data.shadowfax_order_id]
+      .find((value): value is string | number => typeof value === "string" || typeof value === "number");
     const orderId = [data.orderId, data.order_id, data.client_order_id, details.order_id, details.client_order_id]
       .find((value): value is string => typeof value === "string" && value.length > 0);
     const status = [data.status, data.order_status, details.status]
       .find((value): value is string => typeof value === "string" && value.length > 0);
 
-    if (!orderId || !status) {
+    if ((!orderId && sfxOrderId === undefined) || !status) {
       res.status(400).json({ success: false, message: "Webhook order ID and status are required" });
       return;
     }
 
-    const order = await Order.findOne({ orderId });
+    const order = await Order.findOne({
+      $or: [
+        ...(orderId ? [{ orderId }, { orderToken: orderId }] : []),
+        ...(sfxOrderId !== undefined ? [{ shadowfaxOrderId: String(sfxOrderId) }] : []),
+      ],
+    });
     if (!order) {
       res.status(404).json({ success: false, message: "Order not found" });
       return;
     }
 
-    order.status = status;
-    const riderName = [data.riderName, data.rider_name, rider.name]
+    order.deliveryStatus = status.toUpperCase();
+    order.shadowfaxOrderId = sfxOrderId !== undefined ? String(sfxOrderId) : order.shadowfaxOrderId;
+    const mappedStatus = mapShadowfaxStatus(status);
+    if (mappedStatus) order.status = mappedStatus;
+    const riderName = [data.riderName, data.rider_name, riderDetails.rider_name, rider.name]
       .find((value): value is string => typeof value === "string");
-    const riderPhone = [data.riderPhone, data.rider_phone, rider.phone]
+    const riderPhone = [data.riderPhone, data.rider_phone, riderDetails.rider_phone, rider.phone]
       .find((value): value is string => typeof value === "string");
     if (riderName !== undefined) order.riderName = riderName;
     if (riderPhone !== undefined) order.riderPhone = riderPhone;
+    const trackingUrl = [data.track_url, data.tracking_url, data.trackingUrl]
+      .find((value): value is string => typeof value === "string");
+    if (trackingUrl !== undefined) order.shadowfaxTrackingUrl = trackingUrl;
+    const location = riderDetails.rider_location && typeof riderDetails.rider_location === "object"
+      ? riderDetails.rider_location as Record<string, unknown>
+      : data.rider_location && typeof data.rider_location === "object"
+        ? data.rider_location as Record<string, unknown>
+        : {};
+    const coordinates = Array.isArray(location.coordinates) ? location.coordinates : [];
+    const latitude = data.rider_latitude ?? location.latitude ?? location.lat ?? coordinates[1];
+    const longitude = data.rider_longitude ?? location.longitude ?? location.lng ?? coordinates[0];
+    if (typeof latitude === "number") order.riderLatitude = latitude;
+    if (typeof longitude === "number") order.riderLongitude = longitude;
 
     await order.save();
     res.json({ success: true });
@@ -754,7 +828,10 @@ app.post("/api/webhook/shadowfax", async (req: Request, res: Response): Promise<
     console.error("Shadowfax Webhook Error:", error);
     res.status(500).json({ success: false, message: "Could not process Shadowfax update" });
   }
-});
+};
+
+app.post("/api/webhooks/shadowfax", shadowfaxWebhook);
+app.post("/api/webhook/shadowfax", shadowfaxWebhook);
 
 // Direct order placement is disabled; successful online payment is required.
 app.post("/api/orders", (_req: Request, res: Response): void => {
@@ -1027,11 +1104,6 @@ app.patch("/api/orders/:id/status", protectManager, async (req: AuthRequest, res
     console.log(`[Status Update Attempt]: ID = ${targetId}, New Status = ${status}`);
 
     if (mongoose.connection.readyState === 1) {
-      const updateFields: Record<string, any> = {};
-      if (status) updateFields.status = status;
-      if (riderName !== undefined) updateFields.riderName = riderName;
-      if (riderPhone !== undefined) updateFields.riderPhone = riderPhone;
-
       const query = {
         $or: [
           ...(mongoose.isValidObjectId(targetId) ? [{ _id: targetId }] : []),
@@ -1039,14 +1111,29 @@ app.patch("/api/orders/:id/status", protectManager, async (req: AuthRequest, res
           { orderToken: targetId },
         ],
       };
-
-      const updatedOrder = await Order.findOneAndUpdate(
-        query,
-        { $set: updateFields },
-        { new: true, runValidators: false }
-      );
-
+      const updatedOrder = await Order.findOne(query);
       if (updatedOrder) {
+        if (status) updatedOrder.status = status;
+        if (riderName !== undefined) updatedOrder.riderName = riderName;
+        if (riderPhone !== undefined) updatedOrder.riderPhone = riderPhone;
+
+        if (status === "Out for Delivery" && !updatedOrder.shadowfaxOrderId) {
+          const delivery = await createShadowfaxDelivery(updatedOrder);
+          updatedOrder.shadowfaxOrderId = delivery.sfxOrderId;
+          updatedOrder.shadowfaxTrackingUrl = delivery.trackingUrl;
+          updatedOrder.riderName = delivery.riderName;
+          updatedOrder.riderPhone = delivery.riderPhone;
+          updatedOrder.deliveryStatus = delivery.deliveryStatus;
+          updatedOrder.riderLatitude = delivery.riderLatitude;
+          updatedOrder.riderLongitude = delivery.riderLongitude;
+        }
+
+        if (status === "Cancelled" && updatedOrder.shadowfaxOrderId) {
+          await cancelShadowfaxDelivery(updatedOrder.shadowfaxOrderId);
+          updatedOrder.deliveryStatus = "CANCELLED";
+        }
+
+        await updatedOrder.save();
         console.log(`[Status Updated Successfully]: ID ${targetId} -> ${status}`);
         res.json({ success: true, message: `Status updated to ${status}`, order: updatedOrder });
         return;
@@ -1060,6 +1147,22 @@ app.patch("/api/orders/:id/status", protectManager, async (req: AuthRequest, res
       if (status) inMemoryOrders[memIndex].status = status;
       if (riderName !== undefined) inMemoryOrders[memIndex].riderName = riderName;
       if (riderPhone !== undefined) inMemoryOrders[memIndex].riderPhone = riderPhone;
+      if (status === "Out for Delivery" && !inMemoryOrders[memIndex].shadowfaxOrderId) {
+        const delivery = await createShadowfaxDelivery(inMemoryOrders[memIndex]);
+        Object.assign(inMemoryOrders[memIndex], {
+          shadowfaxOrderId: delivery.sfxOrderId,
+          shadowfaxTrackingUrl: delivery.trackingUrl,
+          riderName: delivery.riderName,
+          riderPhone: delivery.riderPhone,
+          deliveryStatus: delivery.deliveryStatus,
+          riderLatitude: delivery.riderLatitude,
+          riderLongitude: delivery.riderLongitude,
+        });
+      }
+      if (status === "Cancelled" && inMemoryOrders[memIndex].shadowfaxOrderId) {
+        await cancelShadowfaxDelivery(inMemoryOrders[memIndex].shadowfaxOrderId);
+        inMemoryOrders[memIndex].deliveryStatus = "CANCELLED";
+      }
       res.json({ success: true, message: `Status updated to ${status}`, order: inMemoryOrders[memIndex] });
       return;
     }

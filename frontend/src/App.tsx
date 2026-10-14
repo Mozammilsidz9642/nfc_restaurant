@@ -258,8 +258,12 @@ type TrackedOrder = {
   deliveryAddress: string;
   items: { name: string; size: string; quantity: number }[];
   totalAmount: number;
+  shadowfaxTrackingUrl?: string | null;
   riderName?: string;
   riderPhone?: string;
+  deliveryStatus?: string;
+  riderLatitude?: number | null;
+  riderLongitude?: number | null;
   createdAt?: string;
 };
 
@@ -284,7 +288,7 @@ function OrderTrackingPage() {
       }
     };
     void fetchOrder();
-    const poll = window.setInterval(() => void fetchOrder(), 12_000);
+    const poll = window.setInterval(() => void fetchOrder(), 60_000);
     return () => {
       cancelled = true;
       window.clearInterval(poll);
@@ -300,7 +304,7 @@ function OrderTrackingPage() {
         <div className="bg-stone-950 px-6 py-6 text-white">
           <p className="text-[10px] font-black uppercase tracking-[0.25em] text-amber-300">NFC Order Tracking</p>
           <h1 className="mt-2 font-serif text-2xl font-black">{order?.orderId || orderId}</h1>
-          <p className="mt-1 text-xs text-stone-300">This page refreshes automatically every 12 seconds.</p>
+          <p className="mt-1 text-xs text-stone-300">This page refreshes automatically every 60 seconds.</p>
         </div>
         <div className="p-6 sm:p-8">
           {error && !order ? (
@@ -319,7 +323,12 @@ function OrderTrackingPage() {
                   return <li key={step} className="flex items-center gap-3"><span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-black ${complete ? 'bg-emerald-600 text-white' : 'bg-stone-100 text-stone-400'}`}>{complete ? '✓' : index + 1}</span><span className={`text-sm font-bold ${complete ? 'text-stone-900' : 'text-stone-400'}`}>{step}</span></li>;
                 })}
               </ol>
-              {order.status === 'Out for Delivery' && order.riderName && <div className="mt-6 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm"><p className="font-bold text-blue-900">Your rider: {order.riderName}</p>{order.riderPhone && <a className="mt-1 inline-block text-blue-700 underline" href={`tel:${order.riderPhone}`}>{order.riderPhone}</a>}</div>}
+              {order.status === 'Out for Delivery' && <div className="mt-6 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm">
+                <p className="font-bold text-blue-900">{order.riderName ? `Your rider: ${order.riderName}` : 'Your rider is being assigned.'}</p>
+                {order.deliveryStatus && <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-blue-700">Delivery update: {order.deliveryStatus.replaceAll('_', ' ')}</p>}
+                {order.riderPhone && <a className="mt-1 inline-block text-blue-700 underline" href={`tel:${order.riderPhone}`}>Call rider: {order.riderPhone}</a>}
+                {order.shadowfaxTrackingUrl && <a className="mt-3 inline-flex rounded-lg bg-blue-700 px-4 py-2 font-bold text-white hover:bg-blue-800" href={order.shadowfaxTrackingUrl} target="_blank" rel="noreferrer">Track Rider Live</a>}
+              </div>}
               <div className="mt-7 border-t border-stone-100 pt-5"><p className="text-xs font-black uppercase tracking-wider text-stone-400">Delivery to</p><p className="mt-1 text-sm text-stone-700">{order.deliveryAddress}</p><ul className="mt-4 space-y-1 text-xs text-stone-600">{order.items?.map((item, index) => <li key={`${item.name}-${index}`}>{item.quantity}× {item.name} ({item.size})</li>)}</ul><p className="mt-4 font-serif text-lg font-black">Total paid: ₹{order.totalAmount}</p></div>
             </>
           )}

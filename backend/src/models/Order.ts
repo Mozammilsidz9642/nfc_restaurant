@@ -23,8 +23,13 @@ export interface OrderDocument extends Document {
   razorpayPaymentId: string;
   status: string;
   trackingUrl: string;
-  riderName: string;
-  riderPhone: string;
+  shadowfaxOrderId: string | null;
+  shadowfaxTrackingUrl: string | null;
+  riderName: string | null;
+  riderPhone: string | null;
+  deliveryStatus: string;
+  riderLatitude?: number | null;
+  riderLongitude?: number | null;
   createdAt: Date;
 }
 
@@ -51,8 +56,13 @@ const OrderSchema = new Schema<OrderDocument>({
   razorpayPaymentId: { type: String, required: true, unique: true, sparse: true },
   status: { type: String, default: "Placed" },
   trackingUrl: { type: String, default: "" },
-  riderName: { type: String, default: "" },
-  riderPhone: { type: String, default: "" },
+  shadowfaxOrderId: { type: String, default: null },
+  shadowfaxTrackingUrl: { type: String, default: null },
+  riderName: { type: String, default: null },
+  riderPhone: { type: String, default: null },
+  deliveryStatus: { type: String, default: "ALLOCATING" },
+  riderLatitude: { type: Number, default: null },
+  riderLongitude: { type: Number, default: null },
   createdAt: { type: Date, default: Date.now },
 });
 
