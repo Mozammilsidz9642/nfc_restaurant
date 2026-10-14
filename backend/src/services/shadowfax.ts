@@ -1,13 +1,10 @@
 import axios from "axios";
+import { getCoordinatesFromAddress } from "../utils/geocoder";
 
 const PICKUP_NAME = "NFC - Noida Fried Chicken";
 const PICKUP_ADDRESS = "KB Complex, Sector Alpha 2, Greater Noida";
 const PICKUP_CITY = "Greater Noida";
-
-interface GeoPoint {
-  latitude: number;
-  longitude: number;
-}
+const PICKUP_COORDINATES = { latitude: 28.4732, longitude: 77.5105 };
 
 interface ShadowfaxEnvelope {
   data?: Record<string, any>;
@@ -51,23 +48,6 @@ const getCredentials = (): { apiKey: string; clientCode: string } => {
   return { apiKey, clientCode };
 };
 
-const geocode = async (address: string): Promise<GeoPoint> => {
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error("Configure GOOGLE_MAPS_API_KEY to resolve pickup and customer delivery coordinates for Shadowfax.");
-  }
-
-  const response = await axios.get<{ status: string; results: Array<{ geometry: { location: { lat: number; lng: number } } }> }>(
-    "https://maps.googleapis.com/maps/api/geocode/json",
-    { params: { address, key: apiKey }, timeout: 10000 }
-  );
-  const location = response.data.results?.[0]?.geometry?.location;
-  if (response.data.status !== "OK" || !location) {
-    throw new Error(`Could not resolve delivery coordinates for address: ${address}`);
-  }
-  return { latitude: location.lat, longitude: location.lng };
-};
-
 const getOrderData = (response: ShadowfaxEnvelope): Record<string, any> =>
   response.data && typeof response.data === "object" ? response.data : response;
 
@@ -102,10 +82,7 @@ const normalizeOrderData = (
 
 export async function createShadowfaxDelivery(order: ShadowfaxOrderInput): Promise<ShadowfaxDeliveryResult> {
   const { apiKey, clientCode } = getCredentials();
-  const [pickup, drop] = await Promise.all([
-    geocode(`${PICKUP_NAME}, ${PICKUP_ADDRESS}`),
-    geocode(order.deliveryAddress),
-  ]);
+  const drop = await getCoordinatesFromAddress(order.deliveryAddress);
   const response = await axios.post<ShadowfaxEnvelope>(
     `${getBaseUrl()}/api/v2/orders/`,
     {
@@ -119,8 +96,8 @@ export async function createShadowfaxDelivery(order: ShadowfaxOrderInput): Promi
         city: PICKUP_CITY,
         name: PICKUP_NAME,
         address: PICKUP_ADDRESS,
-        latitude: pickup.latitude,
-        longitude: pickup.longitude,
+        latitude: PICKUP_COORDINATES.latitude,
+        longitude: PICKUP_COORDINATES.longitude,
       },
       drop_details: {
         city: PICKUP_CITY,
