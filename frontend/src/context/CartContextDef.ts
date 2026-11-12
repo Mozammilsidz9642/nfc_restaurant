@@ -1,6 +1,7 @@
 import { createContext } from 'react';
 import type { CartItem, DiningMode, BillSummaryData } from '../types/cart';
 import type { MenuItem, PriceVariant, MenuAddon } from '../types/menu';
+import type { RestaurantTableItem } from '../types/table';
 
 export interface CartContextType {
   cart: CartItem[];
@@ -23,6 +24,12 @@ export interface CartContextType {
   setDiningMode: (mode: DiningMode) => void;
   tableNumber: string;
   setTableNumber: (table: string) => void;
+  isTableOrderingEnabled: boolean;
+  setIsTableOrderingEnabled: (enabled: boolean) => void;
+  tables: RestaurantTableItem[];
+  isTableModalOpen: boolean;
+  setIsTableModalOpen: (open: boolean) => void;
+  refreshTables: () => Promise<void>;
   toast: { message: string; visible: boolean } | null;
   hideToast: () => void;
 }

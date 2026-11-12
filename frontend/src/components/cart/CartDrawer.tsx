@@ -86,6 +86,11 @@ export function CartDrawer() {
     setIsCartOpen,
     billSummary,
     clearCart,
+    tableNumber,
+    diningMode,
+    setDiningMode,
+    isTableOrderingEnabled,
+    setIsTableModalOpen,
   } = useCart();
 
   const [customerName, setCustomerName] = useState('');
@@ -108,8 +113,9 @@ export function CartDrawer() {
   const [otpError, setOtpError] = useState('');
   const [otpSuccessMessage, setOtpSuccessMessage] = useState('');
 
-  const deliveryCharge = cart.length > 0 ? DELIVERY_FEE : 0;
-  const grandTotal = billSummary.grandTotal + deliveryCharge;
+  const isDelivery = diningMode === 'delivery' || !isTableOrderingEnabled;
+  const deliveryCharge = (isDelivery && cart.length > 0) ? DELIVERY_FEE : 0;
+  const grandTotal = billSummary.itemTotal + billSummary.gst + (diningMode === 'takeaway' ? billSummary.packagingCharge : 0) + deliveryCharge;
 
   useEffect(() => {
     if (otpTimer <= 0) return;
@@ -177,7 +183,10 @@ export function CartDrawer() {
     const name = customerName.trim();
     const phone = customerPhone.replace(/\D/g, '');
     const email = customerEmail.trim();
-    const address = deliveryAddress.trim();
+    const effectiveMode = isTableOrderingEnabled ? diningMode : 'delivery';
+    const address = effectiveMode === 'dine-in'
+      ? `Dine-In • ${tableNumber || 'Table 01'}`
+      : (effectiveMode === 'takeaway' ? 'Takeaway • Store Pick-up' : deliveryAddress.trim());
 
     setIsCheckingOut(true);
     try {
@@ -190,7 +199,7 @@ export function CartDrawer() {
       }
 
       const itemsTotal = billSummary.itemTotal;
-      const deliveryFee = billSummary.grandTotal - billSummary.itemTotal + deliveryCharge;
+      const deliveryFee = (effectiveMode === 'takeaway' ? billSummary.packagingCharge : 0) + deliveryCharge;
       const createResponse = await fetch(`${PAYMENT_API}/create-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -213,6 +222,8 @@ export function CartDrawer() {
             customerPhone: phone,
             customerEmail: email,
             deliveryAddress: address,
+            diningMode: effectiveMode,
+            tableNumber: effectiveMode === 'dine-in' ? tableNumber : '',
             items: cart,
             itemsTotal,
             deliveryFee,
@@ -308,7 +319,8 @@ export function CartDrawer() {
       setCheckoutError('Please enter a valid email address.');
       return;
     }
-    if (!address) {
+    const effectiveMode = isTableOrderingEnabled ? diningMode : 'delivery';
+    if (effectiveMode === 'delivery' && !address) {
       setCheckoutError('Please enter your full delivery address.');
       return;
     }
@@ -393,7 +405,8 @@ export function CartDrawer() {
       setCheckoutError('Please enter a valid email address.');
       return;
     }
-    if (!address) {
+    const effectiveMode = isTableOrderingEnabled ? diningMode : 'delivery';
+    if (effectiveMode === 'delivery' && !address) {
       setCheckoutError('Please enter your full delivery address.');
       return;
     }
@@ -439,7 +452,9 @@ export function CartDrawer() {
             <div>
               <h3 className="font-serif font-black text-base sm:text-lg text-stone-50 tracking-wide">Your Order</h3>
               <p className="text-[11px] text-amber-200/80 font-medium">
-                Delivery Order
+                {isTableOrderingEnabled
+                  ? (diningMode === 'dine-in' ? `${tableNumber} • Dine In` : diningMode === 'takeaway' ? 'Takeaway Order' : 'Home Delivery')
+                  : 'Delivery Order'}
               </p>
             </div>
           </div>
@@ -558,6 +573,48 @@ export function CartDrawer() {
           </div>
         ) : (
           <>
+            {/* Dining Mode Quick Switch (when enabled by admin) */}
+            {isTableOrderingEnabled && (
+              <div className="bg-stone-50 px-4 py-2.5 border-b border-stone-200 flex items-center justify-between text-xs shrink-0">
+                <span className="font-bold text-stone-600">Dining Option:</span>
+                <div className="inline-flex rounded-lg bg-stone-200/70 p-0.5 border border-stone-200">
+                  <button
+                    type="button"
+                    onClick={() => setDiningMode('dine-in')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                      diningMode === 'dine-in'
+                        ? 'bg-red-800 text-white shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    🍽️ Dine-In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiningMode('delivery')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                      diningMode === 'delivery'
+                        ? 'bg-red-800 text-white shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    🛵 Delivery
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiningMode('takeaway')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                      diningMode === 'takeaway'
+                        ? 'bg-red-800 text-white shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    🛍️ Takeaway
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="bg-white px-4 py-3 border-b border-stone-200 space-y-2 shrink-0">
                 <div className="grid grid-cols-2 gap-2">
                   <input
@@ -588,7 +645,7 @@ export function CartDrawer() {
                         setIsEmailVerified(false);
                       }
                     }}
-                    placeholder="Customer Email"
+                    placeholder="Customer Email (for OTP & Invoice)"
                     aria-label="Customer Email"
                     type="email"
                     autoComplete="email"
@@ -601,20 +658,48 @@ export function CartDrawer() {
                     </span>
                   )}
                 </div>
-                <textarea
-                  value={deliveryAddress}
-                  onChange={(e) => setDeliveryAddress(e.target.value)}
-                  placeholder="Full Address (flat/house number, street, landmark)"
-                  aria-label="Full delivery address"
-                  autoComplete="street-address"
-                  rows={2}
-                  className="w-full resize-none bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-hidden focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-                />
+
+                {/* Address or Table Banner depending on Dining Mode */}
+                {isTableOrderingEnabled && diningMode === 'dine-in' ? (
+                  <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200 text-xs flex items-center justify-between">
+                    <div>
+                      <span className="font-bold text-amber-900 block text-[11px] uppercase tracking-wider">Serving at Table:</span>
+                      <span className="text-stone-900 font-extrabold text-xs">{tableNumber} (NFC Kitchen)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsTableModalOpen(true)}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-900 font-bold text-[11px] hover:bg-amber-100 transition cursor-pointer shadow-2xs"
+                    >
+                      Change Table
+                    </button>
+                  </div>
+                ) : isTableOrderingEnabled && diningMode === 'takeaway' ? (
+                  <div className="p-2.5 rounded-xl bg-stone-100 border border-stone-200 text-xs text-stone-700 space-y-0.5">
+                    <span className="font-bold block text-[11px] text-stone-900 uppercase tracking-wider">Pick Up Location:</span>
+                    <span className="text-[11px]">NFC Shop 7, 8, 9, KB Complex, Alpha-2 Greater Noida</span>
+                  </div>
+                ) : (
+                  <textarea
+                    value={deliveryAddress}
+                    onChange={(e) => setDeliveryAddress(e.target.value)}
+                    placeholder="Full Delivery Address (flat/house number, street, landmark)"
+                    aria-label="Full delivery address"
+                    autoComplete="street-address"
+                    rows={2}
+                    className="w-full resize-none bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-xs text-stone-900 focus:outline-hidden focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                  />
+                )}
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {cart.map((item) => <CartItem key={item.uniqueKey} item={item} />)}
-              <div className="pt-2"><BillSummary bill={billSummary} diningMode="delivery" /></div>
+              <div className="pt-2">
+                <BillSummary
+                  bill={{ ...billSummary, grandTotal }}
+                  diningMode={isTableOrderingEnabled ? diningMode : 'delivery'}
+                />
+              </div>
               {deliveryCharge > 0 && (
                 <div className="px-1 flex justify-between text-xs font-semibold text-stone-600">
                   <span>Delivery Charge</span><span className="text-stone-900">₹{deliveryCharge}</span>

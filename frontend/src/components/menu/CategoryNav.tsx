@@ -10,14 +10,14 @@ interface CategoryNavProps {
 }
 
 const CATEGORY_IMAGES: Record<string, string> = {
-  All: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=160&q=80',
+  All: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=160&q=80',
   Biryani: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=160&q=80',
-  Starters: 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?auto=format&fit=crop&w=160&q=80',
+  Starters: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/Chicken_Tandoor_Mix_Platter.jpg/800px-Chicken_Tandoor_Mix_Platter.jpg',
   'Main Course': 'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?auto=format&fit=crop&w=160&q=80',
-  'Roti / Bread': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=160&q=80',
-  Breads: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=160&q=80',
-  'Rice & Daal': 'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?auto=format&fit=crop&w=160&q=80',
-  Sides: 'https://images.unsplash.com/photo-1596797038530-2c107229654b?auto=format&fit=crop&w=160&q=80',
+  'Roti / Bread': 'https://images.unsplash.com/photo-1756821752957-00bfcadc3748?auto=format&fit=crop&w=160&q=80',
+  Breads: 'https://images.unsplash.com/photo-1756821752957-00bfcadc3748?auto=format&fit=crop&w=160&q=80',
+  'Rice & Daal': 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Dal_Makhani..JPG/800px-Dal_Makhani..JPG',
+  Sides: 'https://images.unsplash.com/photo-1591120583691-49d2741e55da?auto=format&fit=crop&w=160&q=80',
 };
 
 export function CategoryNav({

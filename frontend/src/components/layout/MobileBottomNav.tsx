@@ -1,4 +1,4 @@
-import { Home, Utensils, ShoppingBag, User } from 'lucide-react';
+import { Home, Utensils, ShoppingBag, Phone } from 'lucide-react';
 import { useCart } from '../../context/useCart';
 
 interface MobileBottomNavProps {
@@ -6,7 +6,14 @@ interface MobileBottomNavProps {
 }
 
 export function MobileBottomNav({ onOpenTableModal }: MobileBottomNavProps) {
-  const { totalCount, setIsCartOpen } = useCart();
+  const {
+    totalCount,
+    setIsCartOpen,
+    isTableOrderingEnabled,
+    setIsTableModalOpen,
+    tableNumber,
+    diningMode,
+  } = useCart();
 
   const handleHomeClick = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -25,7 +32,7 @@ export function MobileBottomNav({ onOpenTableModal }: MobileBottomNavProps) {
       <button
         type="button"
         onClick={handleHomeClick}
-        className="flex flex-col items-center justify-center gap-0.5 text-red-800 py-1 px-3"
+        className="flex flex-col items-center justify-center gap-0.5 text-red-800 py-1 px-3 cursor-pointer"
       >
         <Home className="w-5 h-5 text-red-800" />
         <span className="text-[10px] font-bold">Home</span>
@@ -35,7 +42,7 @@ export function MobileBottomNav({ onOpenTableModal }: MobileBottomNavProps) {
       <button
         type="button"
         onClick={handleMenuClick}
-        className="flex flex-col items-center justify-center gap-0.5 text-stone-600 hover:text-red-800 py-1 px-3"
+        className="flex flex-col items-center justify-center gap-0.5 text-stone-600 hover:text-red-800 py-1 px-3 cursor-pointer"
       >
         <Utensils className="w-5 h-5" />
         <span className="text-[10px] font-semibold">Menu</span>
@@ -45,7 +52,7 @@ export function MobileBottomNav({ onOpenTableModal }: MobileBottomNavProps) {
       <button
         type="button"
         onClick={() => setIsCartOpen(true)}
-        className="relative flex flex-col items-center justify-center gap-0.5 text-stone-600 hover:text-red-800 py-1 px-3"
+        className="relative flex flex-col items-center justify-center gap-0.5 text-stone-600 hover:text-red-800 py-1 px-3 cursor-pointer"
       >
         <div className="relative">
           <ShoppingBag className="w-5 h-5" />
@@ -58,15 +65,30 @@ export function MobileBottomNav({ onOpenTableModal }: MobileBottomNavProps) {
         <span className="text-[10px] font-semibold">Cart</span>
       </button>
 
-      {/* Profile / Table Tab */}
-      <button
-        type="button"
-        onClick={onOpenTableModal}
-        className="flex flex-col items-center justify-center gap-0.5 text-stone-600 hover:text-red-800 py-1 px-3"
-      >
-        <User className="w-5 h-5" />
-        <span className="text-[10px] font-semibold">Profile</span>
-      </button>
+      {/* Table / Dining Tab or Phone Contact Tab */}
+      {isTableOrderingEnabled ? (
+        <button
+          type="button"
+          onClick={() => {
+            if (onOpenTableModal) onOpenTableModal();
+            else setIsTableModalOpen(true);
+          }}
+          className="flex flex-col items-center justify-center gap-0.5 text-red-800 py-1 px-3 cursor-pointer"
+        >
+          <Utensils className="w-5 h-5 text-red-800" />
+          <span className="text-[10px] font-bold truncate max-w-[60px]">
+            {diningMode === 'dine-in' ? tableNumber : 'Dining'}
+          </span>
+        </button>
+      ) : (
+        <a
+          href="tel:+917011377406"
+          className="flex flex-col items-center justify-center gap-0.5 text-stone-600 hover:text-red-800 py-1 px-3 cursor-pointer"
+        >
+          <Phone className="w-5 h-5" />
+          <span className="text-[10px] font-semibold">Call</span>
+        </a>
+      )}
     </div>
   );
 }

@@ -13,6 +13,8 @@ export interface OrderDocument extends Document {
   customerName: string;
   customerPhone: string;
   customerEmail?: string;
+  diningMode?: "dine-in" | "takeaway" | "delivery";
+  tableNumber?: string;
   deliveryAddress: string;
   items: IOrderItem[];
   totalAmount: number;
@@ -34,7 +36,9 @@ const OrderSchema = new Schema<OrderDocument>({
   customerName: { type: String, required: true },
   customerPhone: { type: String, required: true },
   customerEmail: { type: String, default: "" },
-  deliveryAddress: { type: String, required: true },
+  diningMode: { type: String, enum: ["dine-in", "takeaway", "delivery"], default: "delivery" },
+  tableNumber: { type: String, default: "" },
+  deliveryAddress: { type: String, default: "" },
   items: [
     {
       name: { type: String, required: true },

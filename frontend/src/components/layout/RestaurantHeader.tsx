@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ShoppingBag, Search, Menu, X, Phone, MapPin, Clock } from 'lucide-react';
+import { ShoppingBag, Search, Menu, X, Phone, MapPin, Clock, Utensils, ChevronDown } from 'lucide-react';
 import { useCart } from '../../context/useCart';
 import { RESTAURANT_INFO } from '../../data/mockMenu';
 
@@ -9,7 +9,14 @@ interface RestaurantHeaderProps {
 }
 
 export function RestaurantHeader({ onSearchClick, isSearchActive = false }: RestaurantHeaderProps) {
-  const { totalCount, setIsCartOpen } = useCart();
+  const {
+    totalCount,
+    setIsCartOpen,
+    tableNumber,
+    diningMode,
+    isTableOrderingEnabled,
+    setIsTableModalOpen,
+  } = useCart();
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -151,8 +158,24 @@ export function RestaurantHeader({ onSearchClick, isSearchActive = false }: Rest
             </button>
           </nav>
 
-          {/* Right Action Icons: Call, Search, Cart */}
+          {/* Right Action Icons: Table, Call, Search, Cart */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {/* Table / Dining Mode Pill (Shown when admin has enabled table ordering) */}
+            {isTableOrderingEnabled && (
+              <button
+                type="button"
+                onClick={() => setIsTableModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-stone-100 hover:bg-stone-200/80 text-stone-800 border border-stone-200 font-bold text-xs transition-all cursor-pointer shadow-2xs hover:border-amber-400"
+                title="Change Table or Dining Mode"
+              >
+                <Utensils className="w-3.5 h-3.5 text-red-800" />
+                <span className="max-w-[100px] sm:max-w-none truncate">
+                  {diningMode === 'dine-in' ? tableNumber : diningMode === 'takeaway' ? 'Takeaway' : 'Delivery'}
+                </span>
+                <ChevronDown className="w-3 h-3 text-stone-400 shrink-0" />
+              </button>
+            )}
+
             {/* Quick Call Pill */}
             <a
               href={`tel:${RESTAURANT_INFO.phoneClean}`}

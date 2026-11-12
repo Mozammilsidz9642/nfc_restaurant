@@ -12,6 +12,7 @@ import { ProductDetailSheet } from './components/menu/ProductDetailSheet';
 import { FloatingCart } from './components/cart/FloatingCart';
 import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { CartDrawer } from './components/cart/CartDrawer';
+import { TableModal } from './components/common/TableModal';
 import { Toast } from './components/common/Toast';
 import { EmptyState } from './components/common/EmptyState';
 import { ProductCardSkeleton, CategorySkeleton, HeroSkeleton } from './components/common/Skeleton';
@@ -239,6 +240,9 @@ function MenuAppContent() {
 
       {/* Cart Drawer / Bottom Sheet */}
       <CartDrawer />
+
+      {/* Table & Dining Mode Switch Modal */}
+      <TableModal />
     </div>
   );
 }

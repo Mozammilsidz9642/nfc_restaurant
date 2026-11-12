@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { LockKeyhole, LogOut, RefreshCw, Truck, ChefHat, CheckCircle2, Clock3, Volume2, Package, Boxes, Eye, EyeOff, ArrowLeft, Mail, Plus, Pencil, Trash2, Search, X, Utensils } from 'lucide-react';
+import { LockKeyhole, LogOut, RefreshCw, Truck, ChefHat, CheckCircle2, Clock3, Volume2, Package, Boxes, Eye, EyeOff, ArrowLeft, Mail, Plus, Pencil, Trash2, Search, X, Utensils, QrCode, Copy, Check, Users } from 'lucide-react';
+import type { RestaurantTableItem } from '../types/table';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000') + '/api';
 const TOKEN_KEY = 'nfc_admin_token';
@@ -20,6 +21,8 @@ type AdminOrder = {
   paymentStatus?: string;
   status: string;
   createdAt?: string;
+  diningMode?: 'dine-in' | 'takeaway' | 'delivery';
+  tableNumber?: string;
 };
 type Filter = 'All' | OrderStatus;
 type AdminMenuItem = {
@@ -123,8 +126,26 @@ export default function AdminDashboard() {
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<AdminMenuItem | null>(null);
   const [isDeletingItem, setIsDeletingItem] = useState(false);
   const [itemNotice, setItemNotice] = useState('');
-  const [activeView, setActiveView] = useState<'orders' | 'inventory'>('orders');
+  const [activeView, setActiveView] = useState<'orders' | 'inventory' | 'tables'>('orders');
   const [storeOpen, setStoreOpen] = useState(true);
+  const [isTableOrderingEnabled, setIsTableOrderingEnabled] = useState(true);
+  const [isTogglingTableOrdering, setIsTogglingTableOrdering] = useState(false);
+  const [tables, setTables] = useState<RestaurantTableItem[]>([]);
+  const [tablesLoaded, setTablesLoaded] = useState(false);
+  const [isTableModalOpen, setIsTableModalOpen] = useState(false);
+  const [tableModalMode, setTableModalMode] = useState<'create' | 'edit'>('create');
+  const [editingTable, setEditingTable] = useState<RestaurantTableItem | null>(null);
+  const [tableNumberInput, setTableNumberInput] = useState('');
+  const [tableNameInput, setTableNameInput] = useState('');
+  const [tableCapacityInput, setTableCapacityInput] = useState(4);
+  const [tableSortOrderInput, setTableSortOrderInput] = useState(1);
+  const [tableIsAvailableInput, setTableIsAvailableInput] = useState(true);
+  const [isSavingTable, setIsSavingTable] = useState(false);
+  const [deleteConfirmTable, setDeleteConfirmTable] = useState<RestaurantTableItem | null>(null);
+  const [isDeletingTable, setIsDeletingTable] = useState(false);
+  const [copiedTableNumber, setCopiedTableNumber] = useState<string | null>(null);
+  const [busyTableId, setBusyTableId] = useState<string | null>(null);
+  const [tableSearch, setTableSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('All');
   const [clock, setClock] = useState(new Date());
   const [loading, setLoading] = useState(false);
@@ -173,6 +194,7 @@ export default function AdminDashboard() {
       if (storeResponse.ok) {
         const storeData = await storeResponse.json();
         if (typeof storeData.isStoreOpen === 'boolean') setStoreOpen(storeData.isStoreOpen);
+        if (typeof storeData.isTableOrderingEnabled === 'boolean') setIsTableOrderingEnabled(storeData.isTableOrderingEnabled);
       }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to reach the restaurant server.');
@@ -191,6 +213,21 @@ export default function AdminDashboard() {
       setMenuLoaded(true);
     } catch (menuError) {
       setError(menuError instanceof Error ? menuError.message : 'Could not load menu inventory.');
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, []);
+
+  const refreshTables = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/tables`);
+      if (!response.ok) throw new Error('Could not load restaurant tables.');
+      const result = await response.json();
+      setTables(Array.isArray(result.tables) ? result.tables : []);
+      setTablesLoaded(true);
+    } catch (tblError) {
+      setError(tblError instanceof Error ? tblError.message : 'Could not load restaurant tables.');
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -233,6 +270,12 @@ export default function AdminDashboard() {
     const timer = window.setTimeout(() => void refreshMenu(), 0);
     return () => window.clearTimeout(timer);
   }, [token, activeView, menuLoaded, refreshMenu]);
+
+  useEffect(() => {
+    if (!token || activeView !== 'tables' || tablesLoaded) return;
+    const timer = window.setTimeout(() => void refreshTables(), 0);
+    return () => window.clearTimeout(timer);
+  }, [token, activeView, tablesLoaded, refreshTables]);
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -395,6 +438,177 @@ export default function AdminDashboard() {
       setError(toggleError instanceof Error ? toggleError.message : 'Could not update store status.');
     }
   };
+
+  const toggleTableOrdering = async () => {
+    if (!token) return;
+    const nextVal = !isTableOrderingEnabled;
+    setIsTogglingTableOrdering(true);
+    try {
+      const response = await fetch(`${API_BASE}/store/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          isTableOrderingEnabled: nextVal,
+        }),
+      });
+      const result = await response.json();
+      if (response.status === 401 || response.status === 403) {
+        logout();
+        return;
+      }
+      if (!response.ok || !result.success) throw new Error(result.message || 'Could not update table ordering status.');
+      setIsTableOrderingEnabled(Boolean(result.isTableOrderingEnabled));
+      setItemNotice(
+        result.isTableOrderingEnabled
+          ? 'Table Ordering is now ENABLED on the customer website.'
+          : 'Table Ordering is now DISABLED and hidden from the customer website.'
+      );
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : 'Could not update table ordering status.');
+    } finally {
+      setIsTogglingTableOrdering(false);
+    }
+  };
+
+  const handleOpenCreateTable = () => {
+    setTableModalMode('create');
+    setEditingTable(null);
+    const nextNum = `Table ${(tables.length + 1).toString().padStart(2, '0')}`;
+    setTableNumberInput(nextNum);
+    setTableNameInput('Main Dining Hall');
+    setTableCapacityInput(4);
+    setTableSortOrderInput(tables.length + 1);
+    setTableIsAvailableInput(true);
+    setIsTableModalOpen(true);
+  };
+
+  const handleOpenEditTable = (table: RestaurantTableItem) => {
+    setTableModalMode('edit');
+    setEditingTable(table);
+    setTableNumberInput(table.tableNumber);
+    setTableNameInput(table.name || '');
+    setTableCapacityInput(table.capacity || 4);
+    setTableSortOrderInput(table.sortOrder || 1);
+    setTableIsAvailableInput(table.isAvailable ?? true);
+    setIsTableModalOpen(true);
+  };
+
+  const handleSaveTable = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token || !tableNumberInput.trim()) return;
+    setIsSavingTable(true);
+    setError('');
+    try {
+      const payload = {
+        tableNumber: tableNumberInput.trim(),
+        name: tableNameInput.trim(),
+        capacity: Number(tableCapacityInput) || 4,
+        sortOrder: Number(tableSortOrderInput) || 1,
+        isAvailable: tableIsAvailableInput,
+      };
+      let response: Response;
+      if (tableModalMode === 'create') {
+        response = await fetch(`${API_BASE}/tables`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        const id = editingTable?._id || editingTable?.id;
+        response = await fetch(`${API_BASE}/tables/${encodeURIComponent(id || '')}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+      }
+      const result = await response.json();
+      if (response.status === 401 || response.status === 403) {
+        logout();
+        return;
+      }
+      if (!response.ok || !result.success) throw new Error(result.message || 'Could not save table.');
+      await refreshTables();
+      setIsTableModalOpen(false);
+      setItemNotice(`Table "${payload.tableNumber}" saved successfully.`);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Failed to save table.');
+    } finally {
+      setIsSavingTable(false);
+    }
+  };
+
+  const handleToggleTableAvailability = async (table: RestaurantTableItem) => {
+    if (!token) return;
+    const id = table._id || table.id;
+    if (!id) return;
+    const nextVal = !(table.isAvailable ?? true);
+    setBusyTableId(id);
+    setTables((curr) => curr.map((t) => (t._id === id || t.id === id ? { ...t, isAvailable: nextVal } : t)));
+    try {
+      const response = await fetch(`${API_BASE}/tables/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ isAvailable: nextVal }),
+      });
+      const result = await response.json();
+      if (response.status === 401 || response.status === 403) {
+        logout();
+        return;
+      }
+      if (!response.ok || !result.success) throw new Error(result.message || 'Could not update table status.');
+    } catch (toggleError) {
+      setTables((curr) => curr.map((t) => (t._id === id || t.id === id ? { ...t, isAvailable: !nextVal } : t)));
+      setError(toggleError instanceof Error ? toggleError.message : 'Could not toggle table availability.');
+    } finally {
+      setBusyTableId(null);
+    }
+  };
+
+  const handleDeleteTable = async () => {
+    if (!token || !deleteConfirmTable) return;
+    const id = deleteConfirmTable._id || deleteConfirmTable.id;
+    if (!id) return;
+    setIsDeletingTable(true);
+    try {
+      const response = await fetch(`${API_BASE}/tables/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json();
+      if (response.status === 401 || response.status === 403) {
+        logout();
+        return;
+      }
+      if (!response.ok || !result.success) throw new Error(result.message || 'Could not delete table.');
+      setTables((curr) => curr.filter((t) => t._id !== id && t.id !== id));
+      setItemNotice(`Table "${deleteConfirmTable.tableNumber}" deleted.`);
+      setDeleteConfirmTable(null);
+    } catch (delError) {
+      setError(delError instanceof Error ? delError.message : 'Failed to delete table.');
+    } finally {
+      setIsDeletingTable(false);
+    }
+  };
+
+  const handleCopyTableLink = (tableNumber: string) => {
+    const url = `${window.location.origin}/?table=${encodeURIComponent(tableNumber)}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedTableNumber(tableNumber);
+      setTimeout(() => setCopiedTableNumber(null), 2500);
+    }).catch(() => {
+      // Fallback
+    });
+  };
+
+  const filteredTables = useMemo(() => {
+    if (!tableSearch.trim()) return tables;
+    const q = tableSearch.toLowerCase().trim();
+    return tables.filter(
+      (t) =>
+        t.tableNumber.toLowerCase().includes(q) ||
+        (t.name && t.name.toLowerCase().includes(q))
+    );
+  }, [tables, tableSearch]);
 
   const advanceOrder = async (order: AdminOrder) => {
     const nextStatus: Partial<Record<OrderStatus, OrderStatus>> = {
@@ -746,6 +960,19 @@ export default function AdminDashboard() {
             <div><p className="font-serif text-lg font-black tracking-wide">NFC Partner</p><p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-200/70">Manager & Kitchen</p></div>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <button
+              onClick={() => void toggleTableOrdering()}
+              disabled={isTogglingTableOrdering}
+              className={`rounded-full px-3.5 py-2 text-[11px] font-black tracking-wider transition cursor-pointer ${
+                isTableOrderingEnabled
+                  ? 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/40 hover:bg-amber-500/25'
+                  : 'bg-stone-700/50 text-stone-400 ring-1 ring-stone-600/50 hover:bg-stone-700/80'
+              }`}
+              title="Toggle Table Ordering feature on customer website"
+            >
+              <span className={`mr-2 inline-block h-2 w-2 rounded-full ${isTableOrderingEnabled ? 'bg-amber-400 animate-pulse' : 'bg-stone-500'}`} />
+              TABLE ORDERING: {isTableOrderingEnabled ? 'ON' : 'OFF'}
+            </button>
             <button onClick={() => void toggleStore()} className={`rounded-full px-4 py-2 text-[11px] font-black tracking-wider transition ${storeOpen ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40 hover:bg-emerald-500/25' : 'bg-red-500/15 text-red-300 ring-1 ring-red-500/40 hover:bg-red-500/25'}`}>
               <span className={`mr-2 inline-block h-2 w-2 rounded-full ${storeOpen ? 'bg-emerald-400' : 'bg-red-400'}`} />STORE {storeOpen ? 'OPEN' : 'CLOSED'}
             </button>
@@ -757,8 +984,9 @@ export default function AdminDashboard() {
 
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 inline-flex rounded-xl border border-stone-200 bg-white p-1 shadow-sm">
-          <button onClick={() => setActiveView('orders')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-xs font-extrabold transition ${activeView === 'orders' ? 'bg-red-800 text-white shadow-sm' : 'text-stone-600 hover:bg-stone-50'}`}><Truck className="h-4 w-4" />Live Orders</button>
-          <button onClick={() => setActiveView('inventory')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-xs font-extrabold transition ${activeView === 'inventory' ? 'bg-red-800 text-white shadow-sm' : 'text-stone-600 hover:bg-stone-50'}`}><Boxes className="h-4 w-4" />Menu Items / Stock Control</button>
+          <button onClick={() => setActiveView('orders')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-xs font-extrabold transition cursor-pointer ${activeView === 'orders' ? 'bg-red-800 text-white shadow-sm' : 'text-stone-600 hover:bg-stone-50'}`}><Truck className="h-4 w-4" />Live Orders</button>
+          <button onClick={() => setActiveView('inventory')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-xs font-extrabold transition cursor-pointer ${activeView === 'inventory' ? 'bg-red-800 text-white shadow-sm' : 'text-stone-600 hover:bg-stone-50'}`}><Boxes className="h-4 w-4" />Menu Items / Stock Control</button>
+          <button onClick={() => setActiveView('tables')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-xs font-extrabold transition cursor-pointer ${activeView === 'tables' ? 'bg-red-800 text-white shadow-sm' : 'text-stone-600 hover:bg-stone-50'}`}><QrCode className="h-4 w-4" />Tables & QR / NFC</button>
         </div>
 
         <section className="mb-6 grid gap-3 sm:grid-cols-3">
@@ -769,7 +997,7 @@ export default function AdminDashboard() {
 
         {error && <div role="alert" className="mb-5 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"><span>{error}</span><button onClick={() => setError('')} className="font-bold">Dismiss</button></div>}
 
-        {activeView === 'orders' ? (
+        {activeView === 'orders' && (
           <>
             <div className="mb-5 flex gap-2 overflow-x-auto pb-1">
               {FILTERS.map(({ label, value }) => {
@@ -785,19 +1013,56 @@ export default function AdminDashboard() {
               <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {visibleOrders.map((order) => {
                   const recordId = getOrderRecordId(order);
-                  const actionLabel: Partial<Record<OrderStatus, string>> = { Placed: 'Start Preparing', Preparing: 'Send with Rider', 'Out for Delivery': 'Mark Delivered' };
+                  const isDineIn = order.diningMode === 'dine-in' || Boolean(order.tableNumber);
+                  const actionLabel: Partial<Record<OrderStatus, string>> = {
+                    Placed: 'Start Preparing',
+                    Preparing: isDineIn ? 'Serve to Table' : 'Send with Rider',
+                    'Out for Delivery': isDineIn ? 'Mark Completed' : 'Mark Delivered',
+                  };
                   return (
                     <article key={recordId || order.orderId} className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm transition hover:shadow-md">
                       <div className="flex items-start justify-between gap-3 border-b border-stone-100 p-4">
-                        <div><p className="font-mono text-sm font-black text-red-800">{order.orderId}</p><p className="mt-1 text-sm font-bold text-stone-900">{order.customerName}</p><a href={`tel:${order.customerPhone}`} className="mt-0.5 block text-xs font-medium text-blue-700 hover:underline">{order.customerPhone}</a></div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-mono text-sm font-black text-red-800">{order.orderId}</p>
+                            {isDineIn ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2.5 py-0.5 text-[10px] font-black text-amber-900">
+                                🍽️ DINE-IN • {order.tableNumber || 'Table'}
+                              </span>
+                            ) : order.diningMode === 'takeaway' ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-[10px] font-black text-blue-800">
+                                🥡 TAKEAWAY
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-black text-emerald-800">
+                                🛵 DELIVERY
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-sm font-bold text-stone-900">{order.customerName}</p>
+                          <a href={`tel:${order.customerPhone}`} className="mt-0.5 block text-xs font-medium text-blue-700 hover:underline">{order.customerPhone}</a>
+                        </div>
                         <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${order.status === 'Delivered' ? 'bg-stone-100 text-stone-600' : order.status === 'Out for Delivery' ? 'bg-blue-50 text-blue-700' : order.status === 'Preparing' ? 'bg-amber-50 text-amber-800' : 'bg-red-50 text-red-700'}`}>{order.status}</span>
                       </div>
                       <div className="space-y-4 p-4">
-                        <div><p className="mb-1 text-[10px] font-black uppercase tracking-wider text-stone-400">Delivery Address</p><p className="text-xs leading-relaxed text-stone-700">{order.deliveryAddress}</p></div>
+                        <div>
+                          <p className="mb-1 text-[10px] font-black uppercase tracking-wider text-stone-400">
+                            {isDineIn ? 'Dining / Table' : 'Delivery Address'}
+                          </p>
+                          <p className="text-xs leading-relaxed text-stone-700">
+                            {isDineIn ? (
+                              <span className="font-bold text-stone-900">
+                                🍽️ Table: {order.tableNumber || 'Dine-In Customer'} {order.deliveryAddress && order.deliveryAddress !== `Dine-In • ${order.tableNumber}` ? `(${order.deliveryAddress})` : ''}
+                              </span>
+                            ) : (
+                              order.deliveryAddress || 'Takeaway order - pickup at counter'
+                            )}
+                          </p>
+                        </div>
                         <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-stone-400">Order Items</p><ul className="space-y-1.5">{order.items.map((item, index) => <li key={`${item.name}-${item.size}-${index}`} className="flex justify-between gap-3 text-xs"><span className="text-stone-700"><b className="text-stone-900">{item.quantity}×</b> {item.name} <span className="text-stone-400">({item.size})</span></span><span className="shrink-0 font-semibold text-stone-700">₹{item.price * item.quantity}</span></li>)}</ul></div>
                         <div className="flex items-center justify-between border-t border-stone-100 pt-3"><div><p className="text-[10px] font-black uppercase tracking-wider text-stone-400">Total Bill</p><p className="font-serif text-xl font-black text-stone-900">₹{order.totalAmount}</p></div><span className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[10px] font-extrabold text-emerald-700">{order.paymentStatus === 'Paid' || order.paymentMethod === 'ONLINE' ? 'Paid via Online' : order.paymentStatus || 'Online'}</span></div>
                         {order.status === 'Placed' && !acknowledged.has(recordId) && <button onClick={() => acknowledgeOrderCard(order)} className="w-full rounded-lg border border-amber-300 bg-amber-50 py-2 text-[11px] font-bold text-amber-800 hover:bg-amber-100">Acknowledge New Order</button>}
-                        {actionLabel[order.status as OrderStatus] && <button onClick={() => void advanceOrder(order)} disabled={busyOrderId === recordId} className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-800 py-3 text-xs font-extrabold text-white shadow-sm transition hover:bg-red-900 disabled:opacity-60">{order.status === 'Preparing' ? <Truck className="h-4 w-4" /> : order.status === 'Out for Delivery' ? <CheckCircle2 className="h-4 w-4" /> : <ChefHat className="h-4 w-4" />}{busyOrderId === recordId ? 'Updating…' : actionLabel[order.status as OrderStatus]}</button>}
+                        {actionLabel[order.status as OrderStatus] && <button onClick={() => void advanceOrder(order)} disabled={busyOrderId === recordId} className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-800 py-3 text-xs font-extrabold text-white shadow-sm transition hover:bg-red-900 disabled:opacity-60">{order.status === 'Preparing' ? (isDineIn ? <Utensils className="h-4 w-4" /> : <Truck className="h-4 w-4" />) : order.status === 'Out for Delivery' ? <CheckCircle2 className="h-4 w-4" /> : <ChefHat className="h-4 w-4" />}{busyOrderId === recordId ? 'Updating…' : actionLabel[order.status as OrderStatus]}</button>}
                         {order.createdAt && <p className="text-right text-[10px] text-stone-400">{new Date(order.createdAt).toLocaleString()}</p>}
                       </div>
                     </article>
@@ -806,7 +1071,9 @@ export default function AdminDashboard() {
               </section>
             )}
           </>
-        ) : (
+        )}
+
+        {activeView === 'inventory' && (
           <section className="space-y-4">
             {itemNotice && (
               <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-xs animate-fadeIn">
@@ -1277,6 +1544,413 @@ export default function AdminDashboard() {
                       className="px-5 py-2 rounded-xl bg-red-800 hover:bg-red-900 text-white font-bold text-xs shadow-sm cursor-pointer disabled:opacity-60"
                     >
                       {isDeletingItem ? 'Deleting…' : 'Yes, Delete'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeView === 'tables' && (
+          <section className="space-y-6">
+            {itemNotice && (
+              <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 shadow-xs animate-fadeIn">
+                <span className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  {itemNotice}
+                </span>
+                <button onClick={() => setItemNotice('')} className="text-xs text-emerald-700 hover:text-emerald-900 cursor-pointer font-bold">Dismiss</button>
+              </div>
+            )}
+
+            {/* MASTER FEATURE TOGGLE CARD */}
+            <div className={`overflow-hidden rounded-3xl border transition-all ${
+              isTableOrderingEnabled
+                ? 'border-amber-300 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-white shadow-md'
+                : 'border-stone-300 bg-stone-50/80 shadow-xs'
+            }`}>
+              <div className="p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="space-y-2 max-w-2xl">
+                  <div className="flex items-center gap-2.5">
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black tracking-wide ${
+                      isTableOrderingEnabled
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : 'bg-stone-200 text-stone-700 border border-stone-300'
+                    }`}>
+                      <span className={`h-2 w-2 rounded-full ${isTableOrderingEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-stone-400'}`} />
+                      {isTableOrderingEnabled ? 'FEATURE ACTIVE ON WEBSITE' : 'FEATURE OFF / HIDDEN FROM CUSTOMERS'}
+                    </span>
+                    <span className="text-xs text-stone-500 font-semibold">• Master System Switch</span>
+                  </div>
+                  <h2 className="font-serif text-2xl font-black text-stone-900">
+                    Table-Wise Ordering & QR / NFC System
+                  </h2>
+                  <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
+                    When active, customers in the restaurant can choose their table number, scan tabletop QR stickers, or tap NFC tags to order directly to their table with ₹0 delivery charge.
+                    If you disable this switch, table selection, dine-in mode, and QR prompts are immediately hidden across the website, reverting cleanly to online home delivery & takeaway.
+                  </p>
+                </div>
+
+                <div className="shrink-0 flex flex-col items-start md:items-end gap-2">
+                  <button
+                    onClick={() => void toggleTableOrdering()}
+                    disabled={isTogglingTableOrdering}
+                    className={`inline-flex items-center gap-2.5 px-6 py-3.5 rounded-2xl text-xs sm:text-sm font-black shadow-md transition-all active:scale-95 cursor-pointer disabled:opacity-50 ${
+                      isTableOrderingEnabled
+                        ? 'bg-red-800 hover:bg-red-900 text-white shadow-red-900/20'
+                        : 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-emerald-900/20'
+                    }`}
+                  >
+                    <Utensils className="h-4 w-4" />
+                    <span>
+                      {isTogglingTableOrdering
+                        ? 'Updating…'
+                        : isTableOrderingEnabled
+                        ? 'Turn Table Ordering OFF'
+                        : 'Turn Table Ordering ON'}
+                    </span>
+                  </button>
+                  <p className="text-[11px] text-stone-500 font-medium">
+                    {isTableOrderingEnabled ? 'Click to instantly hide table options on site' : 'Click to activate table ordering for customers'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* TABLES LIST & MANAGEMENT */}
+            <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-xs">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 p-4 sm:px-6">
+                <div>
+                  <h3 className="flex items-center gap-2 font-serif text-lg sm:text-xl font-black text-stone-900">
+                    <QrCode className="h-5 w-5 text-red-800" />
+                    Restaurant Tables & QR / NFC Generator
+                  </h3>
+                  <p className="mt-0.5 text-xs text-stone-500">
+                    Manage table names, seating limits, and copy one-click QR / NFC deep-links for instant table ordering.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleOpenCreateTable}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-red-800 to-red-900 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:from-red-900 hover:to-red-950 transition-all cursor-pointer active:scale-95"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Add New Table</span>
+                  </button>
+                  <button
+                    onClick={() => void refreshTables(true)}
+                    disabled={loading}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 px-3 py-2.5 text-xs font-bold text-stone-600 hover:bg-stone-50 disabled:opacity-50 cursor-pointer"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                    <span className="hidden sm:inline">Refresh</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter and Search */}
+              <div className="p-4 sm:px-6 bg-stone-50/50 border-b border-stone-100 flex flex-wrap gap-3 items-center justify-between">
+                <div className="relative flex-1 min-w-[220px]">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-stone-400" />
+                  <input
+                    type="text"
+                    value={tableSearch}
+                    onChange={(e) => setTableSearch(e.target.value)}
+                    placeholder="Search table by number or section (e.g. Table 01, VIP)..."
+                    className="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-white border border-stone-200 focus:outline-hidden focus:border-red-800 focus:ring-1 focus:ring-red-800/20 text-stone-800 placeholder:text-stone-400"
+                  />
+                  {tableSearch && (
+                    <button
+                      onClick={() => setTableSearch('')}
+                      className="absolute right-2.5 top-2.5 text-stone-400 hover:text-stone-600"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3 text-xs font-bold text-stone-600">
+                  <span className="rounded-lg bg-stone-100 px-2.5 py-1">
+                    Total: {tables.length}
+                  </span>
+                  <span className="rounded-lg bg-emerald-50 text-emerald-800 px-2.5 py-1">
+                    Active: {tables.filter((t) => t.isAvailable !== false).length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Tables Table */}
+              {loading && !tablesLoaded ? (
+                <div className="p-12 text-center text-sm text-stone-500">Loading tables…</div>
+              ) : filteredTables.length === 0 ? (
+                <div className="p-12 text-center">
+                  <Utensils className="mx-auto h-8 w-8 text-stone-400 mb-2" />
+                  <p className="text-sm font-bold text-stone-800">No tables configured</p>
+                  <p className="text-xs text-stone-500 mt-1">Click "+ Add New Table" above to add your first dining table.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px] text-left">
+                    <thead className="bg-stone-50 text-[10px] font-black uppercase tracking-wider text-stone-500">
+                      <tr>
+                        <th className="px-5 py-3.5">Table #</th>
+                        <th className="px-5 py-3.5">Section / Description</th>
+                        <th className="px-5 py-3.5">Capacity</th>
+                        <th className="px-5 py-3.5">Direct QR / NFC Deep-Link</th>
+                        <th className="px-5 py-3.5">Status</th>
+                        <th className="px-5 py-3.5 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100">
+                      {filteredTables.map((tbl) => {
+                        const tableId = tbl._id || tbl.id || tbl.tableNumber;
+                        const isAvail = tbl.isAvailable !== false;
+                        const qrUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/?table=${encodeURIComponent(tbl.tableNumber)}`;
+                        const isCopied = copiedTableNumber === tbl.tableNumber;
+                        return (
+                          <tr key={tableId} className="transition hover:bg-stone-50/80">
+                            {/* Table # */}
+                            <td className="px-5 py-3.5">
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center justify-center h-8 px-2.5 rounded-lg bg-amber-100 border border-amber-300 font-mono font-black text-xs text-amber-900 shadow-2xs">
+                                  {tbl.tableNumber}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Section */}
+                            <td className="px-5 py-3.5">
+                              <p className="font-bold text-xs text-stone-900">
+                                {tbl.name || 'Dining Area'}
+                              </p>
+                            </td>
+
+                            {/* Capacity */}
+                            <td className="px-5 py-3.5">
+                              <span className="inline-flex items-center gap-1 text-xs text-stone-700 bg-stone-100 px-2 py-1 rounded-md font-medium">
+                                <Users className="h-3.5 w-3.5 text-stone-500" />
+                                {tbl.capacity || 4} Seater
+                              </span>
+                            </td>
+
+                            {/* Direct QR Link */}
+                            <td className="px-5 py-3.5">
+                              <div className="flex items-center gap-2">
+                                <code className="text-[11px] bg-stone-100 px-2 py-1 rounded text-stone-600 font-mono max-w-[220px] truncate" title={qrUrl}>
+                                  ?table={tbl.tableNumber}
+                                </code>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyTableLink(tbl.tableNumber)}
+                                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                                    isCopied
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200'
+                                  }`}
+                                  title="Copy URL to encode on QR Code sticker or NFC tag"
+                                >
+                                  {isCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                                  <span>{isCopied ? 'Copied Link' : 'Copy QR Link'}</span>
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* Status switch */}
+                            <td className="px-5 py-3.5">
+                              <div className="flex items-center gap-2.5">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={isAvail}
+                                  aria-label={`${isAvail ? 'Mark table unavailable' : 'Make table available'} ${tbl.tableNumber}`}
+                                  disabled={busyTableId === tableId}
+                                  onClick={() => void handleToggleTableAvailability(tbl)}
+                                  className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer disabled:cursor-wait disabled:opacity-60 ${
+                                    isAvail ? 'bg-emerald-600' : 'bg-stone-300'
+                                  }`}
+                                >
+                                  <span
+                                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-xs transition-transform ${
+                                      isAvail ? 'left-0.5 translate-x-5' : 'left-0.5 translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                                <span className={`text-[11px] font-bold ${isAvail ? 'text-emerald-700' : 'text-stone-400'}`}>
+                                  {isAvail ? 'Active' : 'Offline'}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Actions */}
+                            <td className="px-5 py-3.5 text-right">
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  onClick={() => handleOpenEditTable(tbl)}
+                                  className="p-1.5 rounded-lg text-stone-500 hover:text-amber-800 hover:bg-amber-50 transition cursor-pointer"
+                                  title="Edit Table"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={() => setDeleteConfirmTable(tbl)}
+                                  className="p-1.5 rounded-lg text-stone-400 hover:text-red-700 hover:bg-red-50 transition cursor-pointer"
+                                  title="Delete Table"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* ADD / EDIT TABLE MODAL */}
+            {isTableModalOpen && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                className="fixed inset-0 z-50 bg-stone-950/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
+                onClick={() => setIsTableModalOpen(false)}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col animate-scaleUp"
+                >
+                  <div className="bg-stone-950 text-white px-6 py-4 flex items-center justify-between border-b border-stone-800">
+                    <h3 className="font-serif font-black text-lg text-stone-50 flex items-center gap-2">
+                      <QrCode className="h-4 w-4 text-amber-400" />
+                      {tableModalMode === 'create' ? 'Add New Table' : `Edit: ${editingTable?.tableNumber}`}
+                    </h3>
+                    <button
+                      onClick={() => setIsTableModalOpen(false)}
+                      className="p-1.5 rounded-full text-stone-400 hover:text-white hover:bg-stone-800 transition cursor-pointer"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleSaveTable} className="p-6 space-y-4 text-xs text-stone-700">
+                    <div>
+                      <label className="block font-bold text-stone-800 mb-1">Table Number / Label *</label>
+                      <input
+                        type="text"
+                        required
+                        value={tableNumberInput}
+                        onChange={(e) => setTableNumberInput(e.target.value)}
+                        placeholder="e.g. Table 01, VIP 01, Terrace 02"
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:outline-hidden focus:border-red-800 focus:ring-1 focus:ring-red-800/20"
+                      />
+                      <p className="text-[10px] text-stone-400 mt-1">This will be the identifier scanned via QR / NFC tag.</p>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-stone-800 mb-1">Section / Description</label>
+                      <input
+                        type="text"
+                        value={tableNameInput}
+                        onChange={(e) => setTableNameInput(e.target.value)}
+                        placeholder="e.g. Main Dining Hall, Window Booth, Garden Veranda"
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:outline-hidden focus:border-red-800 focus:ring-1 focus:ring-red-800/20"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-bold text-stone-800 mb-1">Seating Capacity</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={30}
+                          value={tableCapacityInput}
+                          onChange={(e) => setTableCapacityInput(Number(e.target.value))}
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:outline-hidden focus:border-red-800 focus:ring-1 focus:ring-red-800/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-stone-800 mb-1">Display Sort Order</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={tableSortOrderInput}
+                          onChange={(e) => setTableSortOrderInput(Number(e.target.value))}
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:outline-hidden focus:border-red-800 focus:ring-1 focus:ring-red-800/20"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <label className="flex items-center gap-2 cursor-pointer font-bold text-stone-800">
+                        <input
+                          type="checkbox"
+                          checked={tableIsAvailableInput}
+                          onChange={(e) => setTableIsAvailableInput(e.target.checked)}
+                          className="h-4 w-4 rounded text-red-800 focus:ring-red-800 cursor-pointer"
+                        />
+                        <span>Table is Available for Guests</span>
+                      </label>
+                    </div>
+
+                    <div className="pt-3 flex items-center justify-end gap-2 border-t border-stone-100">
+                      <button
+                        type="button"
+                        onClick={() => setIsTableModalOpen(false)}
+                        className="px-4 py-2 rounded-xl border border-stone-200 text-stone-600 font-bold hover:bg-stone-50 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingTable}
+                        className="px-5 py-2 rounded-xl bg-red-800 hover:bg-red-900 text-white font-bold shadow-sm transition active:scale-95 disabled:opacity-60 cursor-pointer"
+                      >
+                        {isSavingTable ? 'Saving…' : tableModalMode === 'create' ? 'Create Table' : 'Save Changes'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* DELETE TABLE CONFIRMATION MODAL */}
+            {deleteConfirmTable && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                className="fixed inset-0 z-50 bg-stone-950/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
+                onClick={() => setDeleteConfirmTable(null)}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-stone-200 text-center space-y-4"
+                >
+                  <div className="mx-auto w-12 h-12 rounded-full bg-red-100 text-red-700 flex items-center justify-center">
+                    <Trash2 className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-serif font-black text-lg text-stone-900">Delete Table</h4>
+                    <p className="text-xs text-stone-500 mt-1">
+                      Are you sure you want to delete <span className="font-bold text-stone-800">{deleteConfirmTable.tableNumber}</span>? Customers will no longer see this table option.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-center gap-2 pt-2">
+                    <button
+                      onClick={() => setDeleteConfirmTable(null)}
+                      className="px-4 py-2 rounded-xl border border-stone-200 text-stone-600 font-bold hover:bg-stone-50 cursor-pointer text-xs"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => void handleDeleteTable()}
+                      disabled={isDeletingTable}
+                      className="px-5 py-2 rounded-xl bg-red-800 hover:bg-red-900 text-white font-bold text-xs shadow-sm cursor-pointer disabled:opacity-60"
+                    >
+                      {isDeletingTable ? 'Deleting…' : 'Yes, Delete'}
                     </button>
                   </div>
                 </div>

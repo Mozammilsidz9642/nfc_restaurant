@@ -483,57 +483,104 @@ export const fullMenuData = [
 ];
 export const getDishImageUrl = (name: string, category: string, isVeg: boolean): string => {
   const n = name.toLowerCase();
+
+  // Biryani
   if (n.includes('biryani')) {
     return 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=800&q=80';
   }
+
+  // Paneer Dishes
   if (n.includes('paneer tikka')) {
     return 'https://images.unsplash.com/photo-1567188040759-fb8a883dc6d8?auto=format&fit=crop&w=800&q=80';
   }
-  if (n.includes('paneer')) {
+  if (n.includes('kadai paneer') || n.includes('paneer do-pyaza')) {
+    return 'https://images.unsplash.com/photo-1585937421612-70a008356fbe?auto=format&fit=crop&w=800&q=80';
+  }
+  if (n.includes('paneer butter') || n.includes('paneer lawabdar') || n.includes('shahi paneer') || n.includes('tawa paneer') || n.includes('paneer')) {
     return 'https://images.unsplash.com/photo-1631452180519-c014fe946bc7?auto=format&fit=crop&w=800&q=80';
   }
-  if (n.includes('tandoori chicken')) {
-    return 'https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?auto=format&fit=crop&w=800&q=80';
+
+  // Kebabs & Tandoori Starters
+  if (n.includes('seekh') || n.includes('kebab')) {
+    return 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/Chicken_Seekh_Kabab.jpg/800px-Chicken_Seekh_Kabab.jpg';
   }
   if (n.includes('tangdi')) {
-    return 'https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?auto=format&fit=crop&w=800&q=80';
+    return 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/70/Chicken_Tandoori_Tangri_Kabab_01.jpg/800px-Chicken_Tandoori_Tangri_Kabab_01.jpg';
   }
-  if (n.includes('malai tikka')) {
-    return 'https://images.unsplash.com/photo-1628294895950-9805252327bc?auto=format&fit=crop&w=800&q=80';
+  if (n.includes('tandoori chicken')) {
+    return 'https://images.unsplash.com/photo-1610057099431-d73a1c9d2f2f?auto=format&fit=crop&w=800&q=80';
+  }
+  if (n.includes('zafrani')) {
+    return 'https://images.unsplash.com/photo-1617692855027-33b14f061079?auto=format&fit=crop&w=800&q=80';
   }
   if (n.includes('afghani')) {
     return 'https://images.unsplash.com/photo-1628294895950-9805252327bc?auto=format&fit=crop&w=800&q=80';
   }
-  if (n.includes('seekh') || n.includes('kebab')) {
-    return 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?auto=format&fit=crop&w=800&q=80';
+  if (n.includes('malai tikka')) {
+    return 'https://images.unsplash.com/photo-1628294895950-9805252327bc?auto=format&fit=crop&w=800&q=80';
+  }
+  if (n.includes('tikka masala')) {
+    return 'https://images.unsplash.com/photo-1772730064970-a7b2735c93b9?auto=format&fit=crop&w=800&q=80';
   }
   if (n.includes('tikka')) {
-    return 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?auto=format&fit=crop&w=800&q=80';
+    return 'https://images.unsplash.com/photo-1705359573325-f2006d5e459f?auto=format&fit=crop&w=800&q=80';
   }
-  if (n.includes('lollipop')) {
+  if (n.includes('lollipop') || n.includes('angara')) {
     return 'https://images.unsplash.com/photo-1567620832903-9fc6debc209f?auto=format&fit=crop&w=800&q=80';
   }
-  if (n.includes('butter chicken') || n.includes('lababdar') || n.includes('shahi')) {
+
+  // Non-Veg Main Course
+  if (n.includes('butter chicken')) {
     return 'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?auto=format&fit=crop&w=800&q=80';
   }
-  if (n.includes('changezi') || n.includes('kadai') || n.includes('rara') || n.includes('handi') || n.includes('tawa chicken') || n.includes('qeema')) {
+  if (n.includes('lababdar')) {
+    return 'https://images.unsplash.com/photo-1772730064951-89b427965dbc?auto=format&fit=crop&w=800&q=80';
+  }
+  if (n.includes('changezi') || n.includes('kadai') || n.includes('rara') || n.includes('handi') || n.includes('tawa') || n.includes('qeema') || n.includes('do-pyaza')) {
     return 'https://images.unsplash.com/photo-1589302168068-964664d93dc0?auto=format&fit=crop&w=800&q=80';
   }
-  if (n.includes('roti') || n.includes('naan') || category === 'Breads' || category === 'Roti / Bread') {
-    return 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=800&q=80';
+
+  // Breads / Roti
+  if (n.includes('roomali') || n.includes('rumali')) {
+    return 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Food-Rumali-Roti.jpg/800px-Food-Rumali-Roti.jpg';
+  }
+  if (n.includes('butter naan')) {
+    return 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Butter_Naan_2.jpg/800px-Butter_Naan_2.jpg';
+  }
+  if (n.includes('plain naan') || n.includes('naan')) {
+    return 'https://images.unsplash.com/photo-1756821752957-00bfcadc3748?auto=format&fit=crop&w=800&q=80';
+  }
+  if (n.includes('butter roti')) {
+    return 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Tandoori_Roti-MB54.jpg/800px-Tandoori_Roti-MB54.jpg';
+  }
+  if (n.includes('roti') || category === 'Breads' || category === 'Roti / Bread') {
+    return 'https://images.unsplash.com/photo-1560336749-ad3058381e3f?auto=format&fit=crop&w=800&q=80';
+  }
+
+  // Rice & Dal
+  if (n.includes('yellow daal') || n.includes('yellow dal')) {
+    return 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/Yellow_Dal_Tadka_-_The_Indismart_Hotel_-_Salt_Lake_City_-_Kolkata_2023-08-13_3308.jpg/800px-Yellow_Dal_Tadka_-_The_Indismart_Hotel_-_Salt_Lake_City_-_Kolkata_2023-08-13_3308.jpg';
   }
   if (n.includes('daal') || n.includes('dal')) {
-    return 'https://images.unsplash.com/photo-1546833998-877b37c2e5c6?auto=format&fit=crop&w=800&q=80';
+    return 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Dal_Makhani..JPG/800px-Dal_Makhani..JPG';
+  }
+  if (n.includes('plain rice')) {
+    return 'https://images.unsplash.com/photo-1536304993881-ff6e9eefa2a6?auto=format&fit=crop&w=800&q=80';
   }
   if (n.includes('rice')) {
     return 'https://images.unsplash.com/photo-1516684732162-798a0062be99?auto=format&fit=crop&w=800&q=80';
   }
+
+  // Sides / Raita
   if (n.includes('raita')) {
-    return 'https://images.unsplash.com/photo-1596797038530-2c107229654b?auto=format&fit=crop&w=800&q=80';
+    return 'https://images.unsplash.com/photo-1591120583691-49d2741e55da?auto=format&fit=crop&w=800&q=80';
   }
+
+  // Veggies
   if (n.includes('mix-veg') || n.includes('veg')) {
     return 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=800&q=80';
   }
+
   return isVeg
     ? 'https://images.unsplash.com/photo-1631452180519-c014fe946bc7?auto=format&fit=crop&w=800&q=80'
     : 'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?auto=format&fit=crop&w=800&q=80';

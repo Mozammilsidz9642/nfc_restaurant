@@ -11,6 +11,7 @@ import Order from "./models/Order";
 import Customer from "./models/Customer";
 import { Manager } from "./models/Manager";
 import { StoreSettings } from "./models/StoreSettings";
+import RestaurantTable from "./models/RestaurantTable";
 import { sendManagerPasswordResetOtp, sendOrderEmail, sendCustomerVerificationOtp } from "./utils/email";
 import { sendOrderSMS } from "./utils/sms";
 import { sendOrderWhatsApp } from "./utils/whatsapp";
@@ -49,8 +50,19 @@ interface InMemoryManagerRecord {
 let inMemoryManager: InMemoryManagerRecord | null = null;
 const inMemoryStore = {
   isStoreOpen: true,
+  isTableOrderingEnabled: true,
   closingMessage: "Welcome to Noida Fried Chicken",
 };
+let inMemoryTables: any[] = [
+  { _id: "tbl-1", id: "tbl-1", tableNumber: "Table 01", name: "Main Dining Hall", capacity: 4, isAvailable: true, sortOrder: 1 },
+  { _id: "tbl-2", id: "tbl-2", tableNumber: "Table 02", name: "Main Dining Hall", capacity: 4, isAvailable: true, sortOrder: 2 },
+  { _id: "tbl-3", id: "tbl-3", tableNumber: "Table 03", name: "Window Corner", capacity: 2, isAvailable: true, sortOrder: 3 },
+  { _id: "tbl-4", id: "tbl-4", tableNumber: "Table 04", name: "Family Booth", capacity: 6, isAvailable: true, sortOrder: 4 },
+  { _id: "tbl-5", id: "tbl-5", tableNumber: "Table 05", name: "Family Booth", capacity: 6, isAvailable: true, sortOrder: 5 },
+  { _id: "tbl-6", id: "tbl-6", tableNumber: "Table 06", name: "Main Dining Hall", capacity: 4, isAvailable: true, sortOrder: 6 },
+  { _id: "tbl-7", id: "tbl-7", tableNumber: "Outdoor 01", name: "Garden Veranda", capacity: 4, isAvailable: true, sortOrder: 7 },
+  { _id: "tbl-8", id: "tbl-8", tableNumber: "VIP 01", name: "AC Private Lounge", capacity: 8, isAvailable: true, sortOrder: 8 },
+];
 const inMemoryOrders: any[] = [];
 interface CustomerOtpRecord {
   email: string;
@@ -140,16 +152,26 @@ app.get("/api/menu", async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
-// 2. PUBLIC: Get Store Status (Store Open/Closed?)
+// 2. PUBLIC: Get Store Status (Store Open/Closed & Table Ordering)
 app.get("/api/store/status", async (_req: Request, res: Response): Promise<void> => {
   try {
     if (mongoose.connection.readyState === 1) {
       let settings = await StoreSettings.findOne();
-      if (!settings) settings = await StoreSettings.create({ isStoreOpen: true });
-      res.json({ success: true, isStoreOpen: settings.isStoreOpen, message: settings.closingMessage });
+      if (!settings) settings = await StoreSettings.create({ isStoreOpen: true, isTableOrderingEnabled: true });
+      res.json({
+        success: true,
+        isStoreOpen: settings.isStoreOpen,
+        isTableOrderingEnabled: settings.isTableOrderingEnabled ?? true,
+        message: settings.closingMessage
+      });
       return;
     }
-    res.json({ success: true, isStoreOpen: true, message: "Welcome to Noida Fried Chicken" });
+    res.json({
+      success: true,
+      isStoreOpen: inMemoryStore.isStoreOpen,
+      isTableOrderingEnabled: inMemoryStore.isTableOrderingEnabled,
+      message: inMemoryStore.closingMessage
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: "Could not fetch store status" });
   }
@@ -249,6 +271,8 @@ app.post("/api/payment/verify-and-place-order", async (req: Request, res: Respon
       customerName, customerPhone, customerEmail, deliveryAddress,
       items, itemsTotal, deliveryFee, totalAmount,
     } = data;
+    const diningMode = typeof data.diningMode === "string" ? data.diningMode : (data.tableNumber ? "dine-in" : "delivery");
+    const tableNumber = typeof data.tableNumber === "string" ? data.tableNumber : "";
 
     const validItems = Array.isArray(items) && items.length > 0 && items.every((item: unknown) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return false;
@@ -368,7 +392,11 @@ app.post("/api/payment/verify-and-place-order", async (req: Request, res: Respon
       customerName,
       customerPhone,
       customerEmail: customerEmail || "",
-      deliveryAddress,
+      diningMode,
+      tableNumber,
+      deliveryAddress: (deliveryAddress && typeof deliveryAddress === "string" && deliveryAddress.trim())
+        ? deliveryAddress.trim()
+        : (diningMode === "dine-in" ? `Dine-In • ${tableNumber || "Table"}` : "Takeaway / Store Pick-up"),
       items,
       deliveryFee,
       totalAmount,
@@ -1071,12 +1099,13 @@ app.patch("/api/orders/:id/status", protectManager, async (req: AuthRequest, res
   }
 });
 
-// 7. MANAGER PROTECTED: Store Open/Close Toggle
+// 7. MANAGER PROTECTED: Store Open/Close & Table Ordering Feature Toggle
 app.post("/api/store/status", protectManager, async (req: AuthRequest, res: Response): Promise<void> => {
-  const { isStoreOpen, closingMessage } = req.body;
+  const { isStoreOpen, isTableOrderingEnabled, closingMessage } = req.body;
 
   try {
     if (typeof isStoreOpen === "boolean") inMemoryStore.isStoreOpen = isStoreOpen;
+    if (typeof isTableOrderingEnabled === "boolean") inMemoryStore.isTableOrderingEnabled = isTableOrderingEnabled;
     if (closingMessage) inMemoryStore.closingMessage = closingMessage;
 
     if (mongoose.connection.readyState === 1) {
@@ -1086,18 +1115,185 @@ app.post("/api/store/status", protectManager, async (req: AuthRequest, res: Resp
       }
 
       if (typeof isStoreOpen === "boolean") settings.isStoreOpen = isStoreOpen;
+      if (typeof isTableOrderingEnabled === "boolean") settings.isTableOrderingEnabled = isTableOrderingEnabled;
       if (closingMessage) settings.closingMessage = closingMessage;
       settings.updatedAt = new Date();
 
       await settings.save();
-      console.log(`[Store Status Changed]: Store is now ${settings.isStoreOpen ? "OPEN" : "CLOSED"}`);
-      res.json({ success: true, isStoreOpen: settings.isStoreOpen, message: settings.closingMessage });
+      console.log(`[Store Status Changed]: Store is now ${settings.isStoreOpen ? "OPEN" : "CLOSED"}, Table Ordering: ${settings.isTableOrderingEnabled ? "ENABLED" : "DISABLED"}`);
+      res.json({
+        success: true,
+        isStoreOpen: settings.isStoreOpen,
+        isTableOrderingEnabled: settings.isTableOrderingEnabled,
+        message: settings.closingMessage
+      });
       return;
     }
 
-    res.json({ success: true, isStoreOpen: inMemoryStore.isStoreOpen, message: inMemoryStore.closingMessage });
+    res.json({
+      success: true,
+      isStoreOpen: inMemoryStore.isStoreOpen,
+      isTableOrderingEnabled: inMemoryStore.isTableOrderingEnabled,
+      message: inMemoryStore.closingMessage
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: "Failed to update store status" });
+  }
+});
+
+// ==================== TABLE MANAGEMENT ROUTES ====================
+
+// 7a. PUBLIC: GET /api/tables (Get all tables or active only)
+app.get("/api/tables", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const onlyActive = req.query.active === "true";
+    if (mongoose.connection.readyState === 1) {
+      const count = await RestaurantTable.countDocuments();
+      if (count === 0) {
+        const defaultTables = [
+          { tableNumber: "Table 01", name: "Main Dining Hall", capacity: 4, isAvailable: true, sortOrder: 1 },
+          { tableNumber: "Table 02", name: "Main Dining Hall", capacity: 4, isAvailable: true, sortOrder: 2 },
+          { tableNumber: "Table 03", name: "Window Corner", capacity: 2, isAvailable: true, sortOrder: 3 },
+          { tableNumber: "Table 04", name: "Family Booth", capacity: 6, isAvailable: true, sortOrder: 4 },
+          { tableNumber: "Table 05", name: "Family Booth", capacity: 6, isAvailable: true, sortOrder: 5 },
+          { tableNumber: "Table 06", name: "Main Dining Hall", capacity: 4, isAvailable: true, sortOrder: 6 },
+          { tableNumber: "Outdoor 01", name: "Garden Veranda", capacity: 4, isAvailable: true, sortOrder: 7 },
+          { tableNumber: "VIP 01", name: "AC Private Lounge", capacity: 8, isAvailable: true, sortOrder: 8 },
+        ];
+        await RestaurantTable.insertMany(defaultTables);
+      }
+      const filter = onlyActive ? { isAvailable: true } : {};
+      const tables = await RestaurantTable.find(filter).sort({ sortOrder: 1, tableNumber: 1 });
+      res.json({ success: true, tables });
+      return;
+    }
+
+    const filtered = onlyActive ? inMemoryTables.filter((t) => t.isAvailable) : inMemoryTables;
+    res.json({ success: true, tables: filtered });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Could not fetch tables" });
+  }
+});
+
+// 7b. MANAGER: POST /api/tables (Create new table)
+app.post("/api/tables", protectManager, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { tableNumber, name, capacity, isAvailable } = req.body;
+    if (!tableNumber || typeof tableNumber !== "string" || !tableNumber.trim()) {
+      res.status(400).json({ success: false, message: "Table number is required (e.g. Table 01, VIP-1)" });
+      return;
+    }
+
+    const cleanNum = tableNumber.trim();
+    if (mongoose.connection.readyState === 1) {
+      const existing = await RestaurantTable.findOne({ tableNumber: cleanNum });
+      if (existing) {
+        res.status(400).json({ success: false, message: `Table "${cleanNum}" already exists` });
+        return;
+      }
+
+      const count = await RestaurantTable.countDocuments();
+      const newTable = new RestaurantTable({
+        tableNumber: cleanNum,
+        name: typeof name === "string" ? name.trim() : "",
+        capacity: typeof capacity === "number" && capacity > 0 ? capacity : 4,
+        isAvailable: typeof isAvailable === "boolean" ? isAvailable : true,
+        sortOrder: count + 1,
+      });
+      await newTable.save();
+      res.status(201).json({ success: true, table: newTable });
+      return;
+    }
+
+    const newInMemory = {
+      _id: `tbl-${Date.now()}`,
+      id: `tbl-${Date.now()}`,
+      tableNumber: cleanNum,
+      name: typeof name === "string" ? name.trim() : "",
+      capacity: typeof capacity === "number" && capacity > 0 ? capacity : 4,
+      isAvailable: typeof isAvailable === "boolean" ? isAvailable : true,
+    };
+    inMemoryTables.push(newInMemory);
+    res.status(201).json({ success: true, table: newInMemory });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || "Failed to create table" });
+  }
+});
+
+// 7c. MANAGER: PUT /api/tables/:id (Update existing table)
+app.put("/api/tables/:id", protectManager, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { tableNumber, name, capacity, isAvailable } = req.body;
+
+    if (mongoose.connection.readyState === 1 && mongoose.isValidObjectId(id)) {
+      const table = await RestaurantTable.findById(id);
+      if (!table) {
+        res.status(404).json({ success: false, message: "Table not found" });
+        return;
+      }
+
+      if (tableNumber && typeof tableNumber === "string" && tableNumber.trim()) {
+        const cleanNum = tableNumber.trim();
+        if (cleanNum !== table.tableNumber) {
+          const duplicate = await RestaurantTable.findOne({ tableNumber: cleanNum, _id: { $ne: id } });
+          if (duplicate) {
+            res.status(400).json({ success: false, message: `Table number "${cleanNum}" is already in use` });
+            return;
+          }
+          table.tableNumber = cleanNum;
+        }
+      }
+
+      if (typeof name === "string") table.name = name.trim();
+      if (typeof capacity === "number" && capacity > 0) table.capacity = capacity;
+      if (typeof isAvailable === "boolean") table.isAvailable = isAvailable;
+
+      await table.save();
+      res.json({ success: true, table });
+      return;
+    }
+
+    const idx = inMemoryTables.findIndex((t) => t._id === id || t.id === id);
+    if (idx !== -1) {
+      if (tableNumber) inMemoryTables[idx].tableNumber = tableNumber.trim();
+      if (typeof name === "string") inMemoryTables[idx].name = name.trim();
+      if (typeof capacity === "number") inMemoryTables[idx].capacity = capacity;
+      if (typeof isAvailable === "boolean") inMemoryTables[idx].isAvailable = isAvailable;
+      res.json({ success: true, table: inMemoryTables[idx] });
+      return;
+    }
+
+    res.status(404).json({ success: false, message: "Table not found" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || "Failed to update table" });
+  }
+});
+
+// 7d. MANAGER: DELETE /api/tables/:id (Delete table)
+app.delete("/api/tables/:id", protectManager, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (mongoose.connection.readyState === 1 && mongoose.isValidObjectId(id)) {
+      const deleted = await RestaurantTable.findByIdAndDelete(id);
+      if (!deleted) {
+        res.status(404).json({ success: false, message: "Table not found" });
+        return;
+      }
+      res.json({ success: true, message: `Table "${deleted.tableNumber}" deleted` });
+      return;
+    }
+
+    const idx = inMemoryTables.findIndex((t) => t._id === id || t.id === id);
+    if (idx !== -1) {
+      const removed = inMemoryTables.splice(idx, 1)[0];
+      res.json({ success: true, message: `Table "${removed.tableNumber}" deleted` });
+      return;
+    }
+
+    res.status(404).json({ success: false, message: "Table not found" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || "Failed to delete table" });
   }
 });
 
